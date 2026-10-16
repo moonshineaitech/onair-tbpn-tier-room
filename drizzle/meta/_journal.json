@@ -1,0 +1,48 @@
+{
+  "version": "7",
+  "dialect": "sqlite",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "6",
+      "when": 1792169767003,
+      "tag": "0000_late_rage",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "6",
+      "when": 1792170011371,
+      "tag": "0001_perfect_spirit",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1792170791169,
+      "tag": "0002_purple_mentor",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "6",
+      "when": 1792172404515,
+      "tag": "0003_exotic_leader",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "6",
+      "when": 1792173793175,
+      "tag": "0004_solid_steel_serpent",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "6",
+      "when": 1792175054199,
+      "tag": "0005_high_newton_destine",
+      "breakpoints": true
+    }
+  ]
+}

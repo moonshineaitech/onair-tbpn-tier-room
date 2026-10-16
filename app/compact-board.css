@@ -1,0 +1,279 @@
+/* A compact, screen-sized tier list. Cards keep a square thumbnail at left. */
+.tier-app {
+  --app-line: #303030;
+  --app-muted: #929292;
+  --card-h: clamp(32px, calc((100dvh - 300px) / 7 - 8px), 56px);
+  --thumb: calc(var(--card-h) - 10px);
+  height: 100dvh;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: #101010;
+  color: #f1f1f1;
+}
+.tier-app .app-header {
+  height: 50px;
+  min-height: 50px;
+  flex-shrink: 0;
+  background: #161616;
+  border-color: #2d2d2d;
+  padding: 0 22px;
+}
+.tier-app .brand { color: #fafafa; font-size: 22px; }
+.tier-app .brand-mark { width: 22px; height: 22px; }
+.tier-app .brand-mark i { background: #fafafa; }
+.tier-app .header-divider { background: #3a3a3a; }
+.tier-app .network-label { color: #8d8d8d; }
+.tier-app .app-header nav .current { color: #f2f2f2; }
+.tier-app .app-header nav .current:after { background: #ff5656; }
+.tier-app .app-header nav button { color: #a1a1a1; }
+.tier-app .app-header nav button:hover { color: white; }
+.tier-app .online-pill { color: #aaa; }
+.tier-app .source-code-link { display: inline-flex; align-items: center; justify-content: center; gap: 4px; min-width: 32px; min-height: 28px; padding: 3px; color: #969696; font-size: 9px; line-height: 1; text-decoration: none; flex-shrink: 0; border-radius: 3px; transition: color .15s, background .15s; }
+.tier-app .source-code-link:hover { color: #f2f2f2; background: #282828; }
+.tier-app .source-code-link:focus-visible { outline: 2px solid #ff7f7f; outline-offset: 2px; }
+@media (max-width: 590px) { .tier-app .source-code-link { min-width: 24px; } .tier-app .source-code-link span { display: none; } }
+.tier-app .watch-button { color: #ddd; background: #242424; border-color: #3b3b3b; padding: 8px 11px; min-height: 31px; }
+.tier-app .watch-button:hover, .tier-app .watch-button.active { background: #373737; }
+.tier-app .share-button { background: #f2f2f2; color: #161616; border-color: #f2f2f2; padding: 8px 12px; min-height: 31px; }
+.tier-app .share-button:hover { background: #d8d8d8; }
+.tier-app .board-page {
+  width: 100%; max-width: none; min-height: 0;
+  flex: 1; display: flex; flex-direction: column;
+  padding: 0 22px;
+}
+.tier-app .page-intro { height: 78px; min-height: 78px; flex-shrink: 0; padding: 12px 0; gap: 20px; }
+.tier-app .board-eyebrow { color: #919191; font-size: 7px; letter-spacing: 1.4px; }
+.tier-app .board-eyebrow .tiny-diamond { background: #ff6565; }
+.tier-app .page-intro h1 { font-size: 29px; letter-spacing: -1.3px; margin: 5px 0 0; color: #f5f5f5; }
+.tier-app .page-intro h1 > span { font-size: 23px; color: #ff7f7f; margin-left: 9px; }
+.tier-app .page-intro p { display: none; }
+.tier-app .episode-selector { background: #1c1c1c; border-color: #373737; padding: 10px 13px; min-width: 265px; gap: 13px; }
+.tier-app .episode-selector:hover { background: #282828; border-color: #555; }
+.tier-app .episode-mark { font-size: 22px; color: #eee; border-color: #444; padding-right: 13px; }
+.tier-app .episode-selector small { color: #969696; font-size: 6px; margin-bottom: 4px; }
+.tier-app .episode-selector b { color: #eee; font-size: 13px; }
+.tier-app .episode-selector > svg { color: #aaa; }
+.tier-app .board-toolbar { min-height: 44px; height: 44px; flex-shrink: 0; border-color: #303030; }
+.tier-app .view-tabs { gap: 23px; }
+.tier-app .view-tabs > button { padding: 11px 0; font-size: 11px; color: #939393; }
+.tier-app .view-tabs > button.active { color: #fafafa; }
+.tier-app .view-tabs > button.active:after { background: #ff6a6a; }
+.tier-app .view-tabs small { background: #333; color: #bbb; }
+.tier-app .board-tools { padding: 0; }
+.tier-app .board-search, .tier-app .board-search input { color: #aaa; }
+.tier-app .board-search input::placeholder { color: #858585; }
+.tier-app .category-control { color: #999; border-color: #383838; }
+.tier-app .category-control select { color: #bbb; color-scheme: dark; }
+.tier-app .add-button { color: #fff; background: #ef4444; border-color: #ef4444; padding: 7px 11px; }
+.tier-app .add-button:hover { background: #ff5656; }
+.tier-app .add-button small { color: #ffe7e7; border-color: #ffaaaa65; }
+.tier-app .board-context { min-height: 30px; height: 30px; flex-shrink: 0; }
+.tier-app .board-context b { color: #b4b4b4; font-size: 9px; }
+.tier-app .board-context > div > span:not(.sync-light) { color: #707070; font-size: 9px; }
+.tier-app .save-status { color: #a9a9a9; }
+.tier-app .save-status .undo-button { border-color: #383838; color: #aaa; }
+.tier-app .tier-board {
+  display: grid; grid-template-rows: repeat(7, minmax(0, 1fr));
+  flex: 1 1 0; min-height: 0; max-height: 560px;
+  border: 1px solid #3b3b3b; background: #1c1c1c;
+  overflow: hidden;
+}
+.tier-app .tier-row, .tier-app .tier-U {
+  min-height: 0; height: auto;
+  background: #202020;
+  border-top: 0; border-bottom: 1px solid #414141;
+}
+.tier-app .tier-row:nth-child(even) { background: #1b1b1b; }
+.tier-app .tier-row:last-child { border-bottom: 0; }
+.tier-app .tier-label { width: 76px; border-right: 1px solid #111; gap: 3px; }
+.tier-app .tier-label > b { font-size: 30px; line-height: 1; color: #171717; letter-spacing: -1px; }
+.tier-app .tier-label > span { font-size: 7px; line-height: 1.2; color: #333; max-width: 72px; }
+.tier-app .tier-U .tier-label { border-right: 1px solid #151515; }
+.tier-app .tier-U .tier-label > b, .tier-app .tier-U .tier-label > span { color: #c4c4c4; }
+.tier-app .tier-U .tier-label > b > svg { width: 22px; height: 22px; }
+.tier-app .tier-content, .tier-app .tier-U .tier-content {
+  height: 100%; min-height: 0;
+  flex-wrap: nowrap; align-items: center; justify-content: flex-start;
+  padding: 3px 30px 3px 9px; gap: 8px;
+  overflow-x: auto; overflow-y: hidden;
+  scrollbar-width: thin; scrollbar-color: #525252 transparent;
+}
+.tier-app .tier-count { top: 50%; right: 9px; transform: translateY(-50%); font-size: 8px; color: #767676; }
+.tier-app .moment-card {
+  flex: 0 0 auto; flex-direction: row; align-items: center;
+  width: clamp(174px, 16vw, 225px); height: var(--card-h); max-height: 100%;
+  border: 1px solid #494949; border-radius: 3px;
+  background: #303030; color: #efefef;
+  box-shadow: 0 1px 3px #0002;
+}
+.tier-app .moment-card:hover { border-color: #9a9a9a; background: #3b3b3b; box-shadow: 0 3px 10px #0003; }
+.tier-app .moment-card:focus-visible { outline-color: #ffb3b3; }
+.tier-app .moment-card > .moment-art {
+  width: var(--thumb); height: var(--thumb); aspect-ratio: 1;
+  flex: 0 0 var(--thumb); margin: 4px 7px 4px 4px;
+  border-radius: 2px; overflow: hidden;
+}
+.tier-app .moment-card .art-word, .tier-app .moment-card .art-index, .tier-app .moment-card .art-orbit { display: none; }
+.tier-app .moment-card .art-symbol { font-size: 28px; transform: none; }
+.tier-app .moment-card .art-hot-take .art-symbol { font-size: 51px; transform: translateY(12px); }
+.tier-app .moment-card .art-guest .art-symbol { font-size: 31px; transform: none; }
+.tier-app .moment-card .art-moment .art-symbol { font-size: 28px; transform: none; }
+.tier-app .moment-card .card-caption { width: auto; flex: 1; min-width: 0; padding: 4px 8px 4px 0 !important; }
+.tier-app .moment-card .card-caption > span {
+  color: #f1f1f1; font-size: 11px; font-weight: 500; line-height: 1.25;
+  display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  max-height: none; -webkit-line-clamp: unset;
+}
+.tier-app .moment-card small { color: #a0a0a0; font-size: 8px; margin-top: 5px; }
+.tier-app .moment-card small > b { color: #e4e4e4; font-size: 9px; }
+.tier-app .drop-hint, .tier-app .tier-U .drop-hint { color: #6d6d6d; font-size: 9px; padding: 2px 3px; gap: 8px; }
+.tier-app .drop-hint small { display: none; }
+.tier-app .empty-cross { color: #5f5f5f; }
+.tier-app .drop-active, .tier-app .tier-row.drop-active:nth-child(even) { background: #353535; box-shadow: inset 0 0 0 2px #bdbdbd; }
+.tier-app .drop-active .tier-count { color: #ddd; }
+.tier-app .drop-placeholder { width: 190px; height: var(--card-h); flex-shrink: 0; border-color: #aaa; background: #ffffff0c; }
+.tier-app .insert-before:before { background: #ff9393; left: -6px; }
+.tier-app .card-sync-dot { background: #ffb4b4; box-shadow: 0 0 0 2px #ff929230; }
+.tier-app .drag-ghost {
+  display: flex; flex-direction: row; align-items: center;
+  background: #363636; border-color: #a8a8a8; color: #fff;
+  box-shadow: 0 10px 25px #0008;
+}
+.tier-app .drag-ghost > .moment-art { width: var(--thumb); height: var(--thumb); flex: 0 0 var(--thumb); margin: 4px 7px 4px 4px; border-radius: 2px; }
+.tier-app .drag-ghost .art-word, .tier-app .drag-ghost .art-index, .tier-app .drag-ghost .art-orbit { display: none; }
+.tier-app .drag-ghost .art-symbol { font-size: 28px; transform: none; }
+.tier-app .drag-ghost .art-hot-take .art-symbol { font-size: 51px; transform: translateY(12px); }
+.tier-app .ghost-title { color: #f1f1f1; font-size: 11px !important; padding: 4px 7px 4px 0; min-width: 0; }
+.tier-app .ghost-badge { background: #e75050; color: #fff; }
+.tier-app .board-statusbar { height: 28px; min-height: 28px; flex-shrink: 0; padding: 5px 0; color: #898989; border-color: #303030; font-size: 9px; }
+.tier-app .board-statusbar b { color: #c2c2c2; }
+.tier-app .board-statusbar > button { color: #aaa; }
+.tier-app .status-separator { color: #4f4f4f; }
+.tier-app .board-bottom { height: 24px; min-height: 24px; flex-shrink: 0; padding: 6px 0; color: #6f6f6f; }
+.tier-app .board-bottom > span:first-child { color: #777; }
+.tier-app .board-bottom > button { color: #aaa; }
+.tier-app .pending-strip { padding: 7px 10px; margin: 5px 0; font-size: 9px; background: #252525; border-color: #383838; color: #bbb; flex-shrink: 0; }
+.tier-app .pending-strip > span { border-color: #494949; }
+.tier-app .pending-strip small { color: #999; }
+.tier-app .app-alert { flex-shrink: 0; }
+.tier-app .watch-drawer { top: 50px; background: #1b1b1b; border-color: #444; color: #f2f2f2; box-shadow: -15px 0 35px #0005; }
+.tier-app .watch-drawer p, .tier-app .drawer-episode > a { color: #999; }
+.tier-app .drawer-callout { background: #242424; border-color: #3f3f3f; }
+.tier-app .drawer-callout > span { color: #ff9090; }
+.tier-app .drawer-callout .dark-button { background: #e94d4d; color: white; }
+.tier-app .chat-toggle { border-color: #444; }
+.tier-app .no-results { background: #2b2b2b; color: #aaa; margin-top: 5px; padding: 8px; flex-shrink: 0; }
+.tier-app .modal { color: #20251f; }
+.tier-app .tier-picker > button:last-child { color: #eee; }
+.tier-app .room-tabbar { display:flex; align-items:center; gap:6px; height:32px; min-height:32px; border-bottom:1px solid #303030; }
+.tier-app .room-tabs { display:flex; align-items:center; gap:4px; overflow-x:auto; min-width:0; flex:1; scrollbar-width:none; }
+.tier-app .room-tabs button { display:flex; align-items:center; gap:6px; flex-shrink:0; border:1px solid transparent; padding:5px 10px; border-radius:4px 4px 0 0; color:#929292; font-size:10px; }
+.tier-app .room-tabs button span { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:180px; }
+.tier-app .room-tabs button:hover { background:#252525; color:white; }
+.tier-app .room-tabs button.active { background:#292929; border-color:#414141; color:#fff; }
+.tier-app .room-tabs button.active svg { color:#ff8e8e; }
+.tier-app .new-room-tab,.tier-app .tab-settings { display:flex; align-items:center; gap:5px; flex-shrink:0; color:#bdbdbd; font-size:10px; padding:6px 8px; border:1px solid #383838; border-radius:4px; }
+.tier-app .new-room-tab:hover,.tier-app .tab-settings:hover { background:#303030; color:white; }
+.tier-app .admin-live-badge { margin-left:auto; display:flex; align-items:center; gap:5px; color:#ffabab; font-size:9px; padding:7px 9px; background:#ee555517; border:1px solid #e966663b; border-radius:4px; }
+.tier-app .tier-content { padding-right:50px; }
+.tier-app .row-add { position:absolute; right:7px; top:50%; transform:translateY(-50%); display:grid; place-items:center; width:24px; height:24px; color:#aaa; border:1px solid #555; border-radius:4px; background:#282828; }
+.tier-app .row-add:hover { color:white; background:#484848; border-color:#888; }
+.tier-app .tier-row:has(.row-add) .tier-count { right:38px; }
+.tier-app .card-edit-hint { margin-right:7px; flex-shrink:0; color:#aaa; opacity:0; }
+.tier-app .moment-card:hover .card-edit-hint,.tier-app .moment-card:focus-visible .card-edit-hint { opacity:1; }
+.tier-app .stream-fallback { display:flex; align-items:center; justify-content:space-between; color:#ffabab; border:1px solid #484848; border-radius:4px; padding:10px 13px; font-size:12px; margin:12px 0; }
+.tier-app .player-modes { display:flex; gap:5px; margin:0 0 10px; }
+.tier-app .player-modes button { font-size:11px; color:#aaa; padding:7px 11px; border:1px solid #444; border-radius:4px; }
+.tier-app .player-modes button.active { color:#fff; background:#3a3a3a; border-color:#666; }
+.editor-image-row { display:flex; gap:16px; align-items:center; margin:17px 0 10px; }
+.editor-image-row > img,.editor-image-placeholder { width:96px; height:96px; object-fit:cover; border:1px solid #cdd0c6; border-radius:7px; background:#e8e9e2; }
+.editor-image-placeholder { display:grid; place-items:center; color:#85887a; }
+.editor-upload { display:flex !important; flex-direction:row !important; align-items:center; gap:7px; cursor:pointer; padding:9px 12px; border:1px solid #cdd0c6; border-radius:4px; font-size:12px; margin:0 0 6px !important; }
+.editor-upload input { width:1px; height:1px; padding:0; position:absolute; opacity:0; }
+.editor-upload:focus-within { outline:2px solid #64846c; outline-offset:2px; }
+.editor-actions { display:flex; gap:12px; align-items:center; margin-top:20px; }
+.tier-app .watch-drawer > .text-button { color:#bbb; }
+.tier-app .watch-drawer .icon-button:hover { background: #393939; }
+@media (max-width: 1100px) {
+  .tier-app .network-label, .tier-app .header-divider { display: none; }
+  .tier-app .board-context > div > span:not(.sync-light) { display: none; }
+  .tier-app .board-tools { gap: 9px; }
+  .tier-app .board-search input { width: 100px; }
+  .tier-app .view-tabs { gap: 18px; }
+}
+@media (max-width: 900px) {
+  .tier-app .app-header { padding: 0 16px; }
+  .tier-app .board-page { padding: 0 16px; }
+  .tier-app .board-toolbar { height: 78px; min-height: 78px; align-content: center; }
+  .tier-app .view-tabs { min-height: 38px; height: 38px; }
+  .tier-app .view-tabs > button { padding: 10px 0; }
+  .tier-app .board-tools { height: 39px; min-height: 39px; padding: 4px 0; border-color: #303030; }
+  .tier-app .board-search input { width: 100%; }
+  .tier-app .board-context b { font-size: 8px; }
+  .tier-app .tier-label { width: 64px; }
+  .tier-app .tier-label > span { font-size: 6px; }
+  .tier-app .moment-card { width: 190px; }
+  .tier-app .board-bottom > span:nth-child(2) { font-size: 6px; }
+}
+@media (max-width: 590px) {
+  .tier-app .app-header { height: 46px; min-height: 46px; padding: 0 12px; }
+  .tier-app .brand { font-size: 21px; }
+  .tier-app .brand-mark { width: 20px; height: 20px; }
+  .tier-app .board-page { padding: 0 10px; }
+  .tier-app .page-intro { height: 64px; min-height: 64px; padding: 9px 2px; flex-wrap: nowrap; gap: 12px; }
+  .tier-app .page-intro h1 { font-size: 24px; margin: 4px 0 0; letter-spacing: -1px; white-space: nowrap; }
+  .tier-app .page-intro h1 > span { font-size: 18px; margin-left: 5px; }
+  .tier-app .board-eyebrow { font-size: 5px; letter-spacing: 1px; }
+  .tier-app .episode-selector { width: auto; min-width: 0; max-width: 210px; flex: 1; padding: 8px 9px; gap: 7px; }
+  .tier-app .episode-mark { display: none; }
+  .tier-app .episode-selector small { font-size: 5px; letter-spacing: .4px; white-space: nowrap; }
+  .tier-app .episode-selector b { font-size: 11px; max-width: 150px; }
+  .tier-app .episode-selector > svg { width: 12px; margin-left: 0; }
+  .tier-app .board-toolbar { height: 76px; min-height: 76px; }
+  .tier-app .view-tabs { height: 36px; min-height: 36px; gap: 18px; }
+  .tier-app .view-tabs > button { font-size: 10px; padding: 9px 0; }
+  .tier-app .board-tools { height: 39px; padding: 4px 2px; gap: 7px; }
+  .tier-app .board-search input { font-size: 10px; min-width: 65px; }
+  .tier-app .category-control { padding: 0 7px; }
+  .tier-app .category-control select { font-size: 9px; max-width: 95px; }
+  .tier-app .add-button { padding: 6px 8px; font-size: 9px; }
+  .tier-app .board-context { height: 28px; min-height: 28px; }
+  .tier-app .board-context b { font-size: 7px; }
+  .tier-app .save-status { font-size: 7px; }
+  .tier-app .tier-label { width: 49px; gap: 3px; }
+  .tier-app .tier-label > b { font-size: 26px; }
+  .tier-app .tier-label > span { font-size: 5px; max-width: 45px; }
+  .tier-app .tier-U .tier-label > span { font-size: 6px; }
+  .tier-app .tier-U .tier-label > b > svg { width: 18px; height: 18px; }
+  .tier-app .tier-content, .tier-app .tier-U .tier-content { padding: 3px 19px 3px 6px; gap: 6px; }
+  .tier-app .tier-count { font-size: 6px; right: 5px; }
+  .tier-app .admin-live-badge { display:none; }
+  .tier-app .room-tabs button { font-size:9px; padding:5px 7px; }
+  .tier-app .room-tabs button span { max-width:120px; }
+  .tier-app .moment-card { width: 174px; }
+  .tier-app .moment-card .card-caption > span { font-size: 10px; }
+  .tier-app .moment-card small { font-size: 7px; margin-top: 4px; }
+  .tier-app .moment-card small > b { font-size: 8px; }
+  .tier-app .drop-hint, .tier-app .tier-U .drop-hint { font-size: 7px; gap: 6px; }
+  .tier-app .drop-placeholder { width: 174px; }
+  .tier-app .board-statusbar { height: 24px; min-height: 24px; padding: 4px 2px; font-size: 7px; }
+  .tier-app .board-bottom { height: 18px; min-height: 18px; padding: 4px 2px; flex-wrap: nowrap; }
+  .tier-app .board-bottom > span:nth-child(2) { display: none; }
+  .tier-app .board-bottom > span:first-child { font-size: 5px; }
+  .tier-app .watch-drawer { top: 0; }
+}
+@media (max-height: 650px) {
+  .tier-app .app-header { height: 42px; min-height: 42px; }
+  .tier-app .page-intro { height: 50px; min-height: 50px; padding: 7px 0; }
+  .tier-app .page-intro .board-eyebrow { display: none; }
+  .tier-app .page-intro h1 { font-size: 25px; margin: 0; }
+  .tier-app .episode-selector { padding: 6px 10px; }
+  .tier-app .board-context { height: 25px; min-height: 25px; }
+  .tier-app .board-bottom { height: 17px; min-height: 17px; padding: 3px 0; }
+  .tier-app .tier-label > b { font-size: 24px; }
+  .tier-app .tier-label > span { font-size: 5px; }
+  .tier-app .moment-card small { margin-top: 3px; font-size: 7px; }
+  .tier-app .moment-card .card-caption > span { font-size: 10px; }
+}

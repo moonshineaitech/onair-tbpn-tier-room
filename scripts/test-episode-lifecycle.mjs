@@ -1,0 +1,25 @@
+import assert from 'node:assert/strict';
+import {DatabaseSync} from 'node:sqlite';
+import {readFileSync,readdirSync} from 'node:fs';
+import ts from 'typescript';
+let checks=0;const check=(value,label)=>{assert.ok(value,label);console.log('PASS '+label);checks++;};
+const sqlite=new DatabaseSync(':memory:');for(const name of readdirSync('drizzle').filter(n=>n.endsWith('.sql')).sort())sqlite.exec(readFileSync('drizzle/'+name,'utf8'));
+function statement(sql,values=[]){const execute=()=>{const s=sqlite.prepare(sql),rows=s.all(...values);return {results:rows,meta:{changes:Number(sqlite.prepare('SELECT changes() n').get().n)}};};return {bind:(...values)=>statement(sql,values),first:async()=>execute().results[0]||null,all:async()=>execute(),run:async()=>execute(),execute};}
+const database={prepare:sql=>statement(sql),batch:async statements=>{sqlite.exec('BEGIN');try{const result=statements.map(s=>s.execute());sqlite.exec('COMMIT');return result;}catch(e){sqlite.exec('ROLLBACK');throw e;}}};
+const source=readFileSync('lib/episode-lifecycle.ts','utf8').replace("import {currentBroadcast} from './tbpn-stream';",'const currentBroadcast=async()=>{throw new Error("Not used in lifecycle fixture");};');const js=ts.transpileModule(source,{compilerOptions:{module:ts.ModuleKind.ESNext,target:ts.ScriptTarget.ES2022}}).outputText;
+const {syncEpisodes}=await import('data:text/javascript;base64,'+Buffer.from(js).toString('base64'));
+const now=1792177200000,videoId='QA123456789',roomId='show-'+videoId;
+const broadcast=(live,time=now,stale=false)=>({selected:{videoId,title:'Fixture show',isLive:live,durationSeconds:live?0:8000},replay:{videoId,title:'Fixture show',isLive:false,durationSeconds:8000},checkedAt:time,nextCheckAt:time+15000,stale});
+check((await syncEpisodes(database,broadcast(true),now)).created===1,'a confirmed livestream creates one standardized episode tab');
+check((await syncEpisodes(database,broadcast(true,now+15000),now+15000)).created===0&&sqlite.prepare('SELECT COUNT(*) n FROM rooms').get().n===1,'repeated live checks do not create duplicate episode tabs');
+sqlite.prepare("INSERT INTO moments (id,roomId,title,description,category,status,createdBy,ipHash,createdAt) VALUES ('item',?,'Segment','','Moment','approved','test','test',?)").run(roomId,now);
+sqlite.prepare("INSERT INTO boards (userId,roomId,updatedAt,title,byline,autoPublish) VALUES ('viewer',?,?,'My board','Viewer',1)").run(roomId,now);
+sqlite.prepare("INSERT INTO votes (userId,itemId,tier,score,updatedAt) VALUES ('viewer','item','S',100,?)").run(now);
+check((await syncEpisodes(database,broadcast(false,now+30000,true),now+30000)).ended===0&&sqlite.prepare('SELECT phase FROM episodes').get().phase==='live','a stale or failed upstream check never ends a show');
+await syncEpisodes(database,broadcast(false,now+60000),now+60000);check(sqlite.prepare('SELECT phase FROM episodes').get().phase==='live','one fresh offline observation does not prematurely finalize');
+check((await syncEpisodes(database,broadcast(false,now+180000),now+180000)).ended===1,'two minutes of confirmed offline observations finalize the episode');
+const post=sqlite.prepare('SELECT * FROM board_posts').get();check(JSON.parse(post.entries)[0].tier==='S'&&post.automatic===1,'finalization snapshots server-saved rankings without an open browser');
+sqlite.prepare("UPDATE votes SET tier='F',score=0").run();await syncEpisodes(database,broadcast(false,now+240000),now+240000);check(sqlite.prepare('SELECT COUNT(*) n FROM board_posts').get().n===1&&JSON.parse(sqlite.prepare('SELECT entries FROM board_posts').get().entries)[0].tier==='S','repeat checks neither duplicate nor rewrite finalized snapshots');
+const next={...broadcast(true,now+86400000),selected:{...broadcast(true).selected,videoId:'QB123456789'}};await syncEpisodes(database,next,now+86400000);check(sqlite.prepare('SELECT COUNT(*) n FROM episodes').get().n===2,'the next stream gets a separate episode and leaves prior data intact');
+const latest={...broadcast(false,now+86460000),selected:{...broadcast(false).selected,videoId:'QC123456789'}};await syncEpisodes(database,latest,now+86460000);check(sqlite.prepare("SELECT phase FROM episodes WHERE videoId='QC123456789'").get().phase==='ended','a first visit after the show receives a dedicated replay episode');
+console.log(`${checks} episode lifecycle checks passed.`);sqlite.close();

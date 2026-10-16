@@ -1,0 +1,11 @@
+'use client';
+import {useEffect,useState} from 'react';
+import {Check,ShieldCheck} from 'lucide-react';
+type Data={moderators:string[];mutes:{id:string;roomId:string;author:string;until:number;reason:string}[]};
+async function call(body?:unknown){const r=await fetch('/api/chat/admin',body?{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}:{cache:'no-store'});const d=await r.json() as Data&{error?:string};if(!r.ok)throw new Error(d.error);return d;}
+export default function ChatAdmin(){
+ const [data,setData]=useState<Data|null>(null),[emails,setEmails]=useState(''),[error,setError]=useState(''),[busy,setBusy]=useState(false);
+ useEffect(()=>{let active=true;call().then(d=>{if(active){setData(d);setEmails(d.moderators.join('\n'));}}).catch(e=>setError(e.message));return()=>{active=false;};},[]);
+ async function action(body:unknown){setBusy(true);setError('');try{await call(body);setData(await call());}catch(e){setError((e as Error).message);}finally{setBusy(false);}}
+ return <>{error?<div className="alert" role="alert">{error}</div>:null}<h3>Room chat moderators</h3><p>Moderators can hide Room chat messages and mute participants. They must sign in with an approved email. Board and newsletter administration stays with the admin account.</p><form onSubmit={e=>{e.preventDefault();void action({action:'roles',moderators:emails.split('\n').map(s=>s.trim()).filter(Boolean)});}}><label>Moderator emails <span>One per line · up to 30</span><textarea rows={4} maxLength={8000} value={emails} onChange={e=>setEmails(e.target.value)}/></label><button className="dark-button" disabled={busy}><ShieldCheck size={14}/>Save moderators</button></form><h3>Active room mutes</h3>{data?.mutes.length?data.mutes.map(m=><div className="chat-mute-row" key={m.id}><div><b>{m.author}</b><p>{m.reason} · until {new Date(m.until).toLocaleString()}</p></div><button className="text-button" disabled={busy} onClick={()=>void action({action:'unmute',id:m.id})}>Unmute<Check size={13}/></button></div>):<p className="muted">No active mutes.</p>}<p className="fine-print">These controls apply to Room chat. YouTube moderation uses the permissions on the connected YouTube channel.</p></>;
+}

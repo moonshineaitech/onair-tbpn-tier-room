@@ -1,0 +1,6 @@
+{
+  "$schema":"https://openapi.vercel.sh/vercel.json",
+  "framework":null,
+  "functions":{"api/index.mjs":{"maxDuration":60},"api/collector.mjs":{"maxDuration":60,"experimentalTriggers":[{"type":"queue/v2beta","topic":"onair-episode-lifecycle"}]}},
+  "rewrites":[{"source":"/api/collector","destination":"/api/collector"},{"source":"/:path*","destination":"/api/index?__onair_path=/:path*"}]
+}

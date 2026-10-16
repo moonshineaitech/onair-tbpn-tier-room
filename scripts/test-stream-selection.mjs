@@ -1,0 +1,28 @@
+import assert from 'node:assert/strict';
+import {readFileSync,existsSync} from 'node:fs';
+import ts from 'typescript';
+const moduleUrl=code=>'data:text/javascript;base64,'+Buffer.from(ts.transpileModule(code,{compilerOptions:{module:ts.ModuleKind.ESNext,target:ts.ScriptTarget.ES2022}}).outputText).toString('base64');
+const rooms=moduleUrl(readFileSync(new URL('../lib/room-data.ts',import.meta.url),'utf8'));
+const schedule=moduleUrl(readFileSync(new URL('../lib/show-schedule.ts',import.meta.url),'utf8'));
+const {selectBroadcast,parseBroadcastPage,currentBroadcast}=await import(moduleUrl(readFileSync(new URL('../lib/tbpn-stream.ts',import.meta.url),'utf8').replace("'./room-data'",JSON.stringify(rooms)).replace("'./show-schedule'",JSON.stringify(schedule))));
+let checks=0;const check=(v,label)=>{assert.ok(v,label);checks++;console.log('PASS '+label);};
+const channel='UC-DRzaGnL_vtBUpCFH5M0tg';
+const page=items=>({metadata:{channelMetadataRenderer:{externalId:channel}},contents:{twoColumnBrowseResultsRenderer:{tabs:[{tabRenderer:{selected:true,content:{richGridRenderer:{contents:items.map(content=>({richItemRenderer:{content}}))}}}}]}}});
+const modern=(id,title,time,style='THUMBNAIL_OVERLAY_BADGE_STYLE_DEFAULT')=>({lockupViewModel:{contentId:id,contentType:'LOCKUP_CONTENT_TYPE_VIDEO',metadata:{lockupMetadataViewModel:{title:{content:title}}},contentImage:{thumbnailViewModel:{overlays:[{thumbnailBottomOverlayViewModel:{badges:[{thumbnailBadgeViewModel:{text:time,badgeStyle:style}}]}}]}}}});
+const legacy=(id,title,time,live=false)=>({videoRenderer:{videoId:id,title:{runs:[{text:title}]},lengthText:{simpleText:time},thumbnailOverlays:live?[{thumbnailOverlayTimeStatusRenderer:{style:'LIVE',text:{simpleText:'LIVE'}}}]:[]}});
+const replay=modern('AV2LlJ-yw8k','Full latest episode','2:07:33'),older=legacy('pBXxoT1Ts8M','Older episode','2:39:41'),live=modern('X55cYs-wYOM','Today live','LIVE','THUMBNAIL_OVERLAY_BADGE_STYLE_LIVE');
+let result=selectBroadcast(page([modern('jXHdYOOuxDU','Short clip','03:10'),replay,older]));
+check(result.selected.videoId==='AV2LlJ-yw8k'&&result.selected.durationSeconds===7653,'newest full livestream replay is selected ahead of older shows and clips');
+result=selectBroadcast(page([replay,older,live]));check(result.selected.isLive&&result.selected.videoId==='X55cYs-wYOM'&&result.replay.videoId==='AV2LlJ-yw8k','active livestream takes priority while retaining the latest full replay');
+result=selectBroadcast(page([legacy('X55cYs-wYOM','Live legacy renderer','',true),replay]));check(result.selected.isLive,'legacy YouTube live badges are detected');
+result=selectBroadcast(page([modern('X55cYs-wYOM','Scheduled show','UPCOMING'),replay]));check(result.selected.videoId==='AV2LlJ-yw8k','upcoming shows are not treated as currently live');
+result=selectBroadcast(page([legacy('AV2LlJ-yw8k','We must LIVE: replay title','2:07:33')]));check(!result.selected.isLive,'the word live in a title does not fabricate a live broadcast');
+const wrong=page([replay]);wrong.metadata.channelMetadataRenderer.externalId='another-channel';check(selectBroadcast(wrong)===null,'only the verified TBPN channel can supply automatic videos');
+check(selectBroadcast(page([modern('bad-id','Invalid id','2:00:00')]))===null,'invalid video identifiers are rejected');
+check(parseBroadcastPage('<script>var ytInitialData = '+JSON.stringify(page([replay]))+';</script>').selected.videoId==='AV2LlJ-yw8k','public channel HTML is parsed without executing scripts');
+check(parseBroadcastPage('<html>unavailable</html>')===null,'unavailable YouTube responses fail safely');
+if(existsSync('.sites-runtime/tbpn-streams.html'))check(parseBroadcastPage(readFileSync('.sites-runtime/tbpn-streams.html','utf8')).selected.durationSeconds>=1200,'current official YouTube page selects a full show');
+const settings=new Map();const database={prepare(sql){let args=[];return {bind(...a){args=a;return this;},async first(){if(sql.startsWith('SELECT value'))return settings.has('tbpnBroadcast')?{value:settings.get('tbpnBroadcast')}:null;if(sql.includes('tbpnBroadcastLock')){if(Number(settings.get('lock')||0)>=args[1])return null;settings.set('lock',args[0]);return {value:args[0]};}},async run(){if(sql.includes("INSERT INTO settings (key,value) VALUES ('tbpnBroadcast',"))settings.set('tbpnBroadcast',args[0]);if(sql.startsWith('UPDATE settings'))settings.set('lock','0');return {success:true};}};}};
+const realFetch=globalThis.fetch;let requests=0;
+try{globalThis.fetch=async()=>{requests++;return new Response('<script>var ytInitialData = '+JSON.stringify(page([replay,live]))+';</script>');};const first=await currentBroadcast(database),second=await currentBroadcast(database);check(first.selected.isLive&&!first.stale&&second.selected.videoId===first.selected.videoId&&requests===1,'visitors share one cached automatic selection');const saved=JSON.parse(settings.get('tbpnBroadcast'));saved.nextCheckAt=0;settings.set('tbpnBroadcast',JSON.stringify(saved));globalThis.fetch=async()=>{throw new Error('YouTube unavailable');};const stale=await currentBroadcast(database);check(stale.stale&&stale.selected.videoId===first.selected.videoId,'temporary upstream failures retain the last known real video with stale status');settings.clear();const fallback=await currentBroadcast(database);check(fallback.stale&&!fallback.selected.isLive&&fallback.selected.videoId==='AV2LlJ-yw8k','first-load failures use a verified full replay instead of an unavailable channel embed');}finally{globalThis.fetch=realFetch;}
+console.log(`${checks} stream selection checks passed.`);

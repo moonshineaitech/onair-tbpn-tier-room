@@ -1,0 +1,35 @@
+import assert from 'node:assert/strict';
+import {createHash,randomUUID} from 'node:crypto';
+const base='http://127.0.0.1:5173';let checks=0;const check=(ok,label)=>{assert.ok(ok,label);console.log('PASS '+label);checks++;};
+async function client(ip,admin=false){let cookie=admin?'__sites_local_auth=1':'';const call=async(path,body)=>{const r=await fetch(base+'/api/'+path,{method:body===undefined?'GET':'POST',headers:{'cf-connecting-ip':ip,...(cookie?{cookie}:{}),...(body===undefined?{}:{origin:base,'Content-Type':'application/json'})},...(body===undefined?{}:{body:JSON.stringify(body)})});return {status:r.status,data:await r.json(),cookie:r.headers.get('set-cookie')};};if(!admin){const c=await call('challenge');let n=0;while(!createHash('sha256').update(c.data.id+':'+n).digest('hex').startsWith('0000'))n++;const r=await call('verify',{id:c.data.id,nonce:String(n)});assert.equal(r.status,200);cookie=r.cookie.split(';')[0];}return call;}
+const admin=await client('127.11.0.1',true),a=await client('127.11.0.2'),b=await client('127.11.0.3');
+const roomId=(await admin('admin',{action:'room',title:'Chat newsletter QA',description:'Disposable local test',video:''})).data.roomId;assert.ok(roomId);
+const newsletter=await admin('newsletter');check(newsletter.status===200&&newsletter.data.topics.length>0&&newsletter.data.url.startsWith('https://tbpn.substack.com/'),'admin can load the official newsletter and topic candidates');
+check((await a('newsletter')).status===403,'newsletter import source is restricted to admins');
+const importBody={roomId,title:'QA run of show',url:'https://tbpn.substack.com/p/local-qa',topics:[{title:'Guest QA arrival',category:'Guest'},{title:'Product QA launch',category:'Product'}]};
+check((await a('newsletter/import',importBody)).status===403,'visitors cannot publish a newsletter');
+let result=await admin('newsletter/import',importBody);check(result.status===201&&result.data.added===2,'selected newsletter topics publish immediately');
+result=await admin('newsletter/import',importBody);check(result.data.added===0&&result.data.skipped===2,'reimporting the same newsletter does not duplicate topics');
+let state=(await b('state?room='+roomId)).data;check(state.moments.length===2&&state.shared.every(p=>p.tier==='U'),'newsletter topics persist in Unranked for other viewers');
+check((await admin('newsletter/import',{...importBody,url:'https://evil.example/news'})).status===400,'untrusted source URLs are rejected');
+const abort=new AbortController(),stream=await fetch(base+'/api/events?room='+roomId,{signal:abort.signal}),reader=stream.body.getReader(),decoder=new TextDecoder();let pending='';
+async function event(after=-1){const end=Date.now()+6000;while(Date.now()<end){let at;while((at=pending.indexOf('\n\n'))>=0){const block=pending.slice(0,at);pending=pending.slice(at+2);const match=block.match(/data: (.+)/);if(match){const d=JSON.parse(match[1]);if(d.chatRevision>after)return d;}}const chunk=await reader.read();if(chunk.done)throw new Error('Stream ended');pending+=decoder.decode(chunk.value);}throw new Error('No chat event');}
+let rev=(await event()).chatRevision;const payload={roomId,author:'Alex',body:'A thoughtful chat comment',clientId:randomUUID()};
+result=await a('chat',payload);check(result.status===201,'verified visitor can post a room comment');
+check((await event(rev)).chatRevision>rev,'room comments broadcast a live revision');
+let chat=(await b('chat?room='+roomId)).data;check(chat.messages.length===1&&chat.messages[0].body===payload.body&&!('userId' in chat.messages[0]),'another visitor sees the persisted message without identity leakage');
+check((await a('chat',payload)).status===200&&(await b('chat?room='+roomId)).data.messages.length===1,'retrying a message is idempotent');
+check((await a('chat',{...payload,clientId:randomUUID(),body:'f u c k'})).status===400,'blocked words apply to room chat');
+check((await b('chat/moderate',{action:'mute',id:payload.clientId,minutes:60})).status===403,'members cannot mute other participants');
+check((await b('chat/moderate',{action:'hide',id:payload.clientId})).status===403,'members cannot hide another participant’s message');
+check((await admin('chat/moderate',{action:'mute',id:payload.clientId,minutes:60})).status===200,'admin can apply a timed mute');
+check((await a('chat',{...payload,clientId:randomUUID(),body:'This should be muted'})).status===403,'a muted participant cannot bypass the server mute');
+chat=(await a('chat?room='+roomId)).data;check(chat.muteUntil>Date.now(),'muted participant receives the mute expiry');
+const moderation=(await admin('chat/admin')).data,mute=moderation.mutes.find(m=>m.roomId===roomId);check(mute&&!(await b('chat?room='+roomId)).data.canModerate,'moderation controls remain protected');
+check((await admin('chat/admin',{action:'unmute',id:mute.id})).status===200,'admin can reverse a mute');
+check((await a('chat',{...payload,clientId:randomUUID(),body:'Back in the conversation'})).status===201,'unmuted participant can post again');
+check((await admin('chat/moderate',{action:'hide',id:payload.clientId})).status===200&&!(await b('chat?room='+roomId)).data.messages.some(m=>m.id===payload.clientId),'moderation removes a message from all viewers');
+const own=(await b('chat',{roomId,author:'Bailey',body:'My own message',clientId:randomUUID()})).data.id;check((await b('chat/moderate',{action:'hide',id:own})).status===200,'participants may hide their own message');
+const original=moderation.moderators;await admin('chat/admin',{action:'roles',moderators:['moderator@example.com']});check((await admin('chat/admin')).data.moderators.includes('moderator@example.com'),'admin can assign moderator emails');await admin('chat/admin',{action:'roles',moderators:original});
+check((await a('chat/admin',{action:'roles',moderators:['attacker@example.com']})).status===403,'members cannot grant moderator privileges');
+abort.abort();await reader.cancel().catch(()=>{});console.log(`${checks} chat/newsletter checks passed. Room: ${roomId}`);
