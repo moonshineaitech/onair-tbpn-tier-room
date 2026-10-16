@@ -95,3 +95,6 @@ Admin → Insights (also the desktop Insights button) provides per-segment tier 
 
 
 The background collector uses `@vercel/queue` in `vercel-gateway/`, with a durable, delayed message for the next check. Idempotency keys prevent duplicate chains; failed source reads leave episode state unchanged and the next check still runs. `nextCollectorTick` accounts for weekends and Central daylight saving time. The collector was bootstrapped through the official SDK using the project's production runtime identity in the Vercel CLI. Each successful check queues the next one, including across weekends; the initial chain does not depend on visitors. No operator credential needs to be sent to a public initializer. The hourly-only Sites task scheduler is not used. Queue logs report check timestamps and counts without visitor data.
+
+
+Live broadcasts open at the live edge rather than requesting a zero-second DVR offset. Once playback metadata is ready, the player seeks to the current end with a three-second buffer. Go live returns a rewound or paused viewer to the current broadcast; explicit moment timestamps and replay playback keep their requested positions. Today’s episode topics are stored as board data, separate from source code.
