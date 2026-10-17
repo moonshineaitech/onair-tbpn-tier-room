@@ -7,7 +7,7 @@ export const TIERS = [
   {id:'D',label:'On mute',value:20,color:'#bfff7f'},
   {id:'F',label:'Never again',value:0,color:'#7fff7f'},
 ];
-export type Moment = {imageCredit?:{url:string;label:string;kind:string}|null;id:string;roomId:string;title:string;description:string;category:string;timestamp:number;image:string|null;status:string;createdAt:number;version?:number;score?:number;count?:number;tier?:string;sample?:boolean};
+export type Moment = {hasTimestamp?:boolean;timing?:{seconds:number|null;source:string;locked:boolean;version:number;evidence:string;updatedAt:number}|null;imageCredit?:{url:string;label:string;kind:string}|null;id:string;roomId:string;title:string;description:string;category:string;timestamp:number;image:string|null;status:string;createdAt:number;version?:number;score?:number;count?:number;tier?:string;sample?:boolean};
 export type Room = {id:string;title:string;description:string;videoId:string|null;status:string;createdAt:number;revision?:number};
 export type Placement={itemId:string;tier:string;score:number;position:number;version:number;updatedAt:number};
 export type Vote={itemId:string;tier:string;score:number};
@@ -30,3 +30,5 @@ export const SAMPLE_MOMENTS: Moment[] = [
 export const CATEGORIES=['Moment','Hot take','Guest','Product','Meme'];
 export function timecode(n:number){return n?`${Math.floor(n/3600)?Math.floor(n/3600)+':':''}${String(Math.floor(n/60)%60).padStart(2,'0')}:${String(n%60).padStart(2,'0')}`:'—';}
 export function parseTime(s:string){if(!s.trim())return 0;const p=s.split(':').map(Number);if(p.length>3||p.some(n=>!Number.isFinite(n)||n<0||!Number.isInteger(n))||p.slice(1).some(n=>n>59))throw new Error('Use a timestamp like 12:34 or 1:12:34.');const n=p.reduce((a,b)=>a*60+b,0);if(n>86400)throw new Error('Timestamp must be within 24 hours.');return n;}
+
+export const hasMomentTime=(m:Moment)=>m.hasTimestamp??m.timestamp>0;

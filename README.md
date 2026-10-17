@@ -108,3 +108,10 @@ The Unranked catalog wraps into a responsive grid with a visible available count
 ## Automatic newsletter and image import
 
 New confirmed livestreams now start a durable per-episode newsletter import through the existing unattended collector. The issue is matched to the exact YouTube video, safe topics go to Unranked, and relevant source images are stored progressively under the shared daily image limit. Admin edits and hidden items are protected. Newsletter now includes sync status, per-show pause/resume, and Check now controls alongside the manual backup. See [the import operations and verification guide](docs/automatic-show-import.md).
+
+
+## Moment timestamps and daily chat
+
+The background collector now reads official TBPN chapter times and available public captions, and saves separate per-moment timing records. Timestamp pills and shared moment links jump to the saved playback position. Admins can correct or Mark now, clear uncertain times, or restore automatic timing. Missing or ambiguous source timing stays pending.
+
+Room comments can capture the actual same-episode player clock, carry a topic tag, and become prefilled moment nominations. Independent community discussion can supply a labeled approximate start; moderation can retract it. The chronological show guide makes replay browsing easier. Admin Insights and CSV now include start times, clip links, topic comments, and commenting identities. See [the timing and conversation guide](docs/moment-timestamps.md) for source limitations, precedence, and verification.

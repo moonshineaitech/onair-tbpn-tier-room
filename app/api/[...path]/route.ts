@@ -1,3 +1,5 @@
+import {timingState} from '@/lib/moment-timing';
+import {timingServices} from '@/lib/timing-services';
 import { env } from 'cloudflare:workers';
 import { getChatGPTUser } from '@/app/chatgpt-auth';
 import { SAMPLE_ROOM, SAMPLE_MOMENTS, TBPN_LIVE, TBPN_CHANNEL, CATEGORIES, TIERS, initialPlacement, type Moment, type Placement } from '@/lib/room-data';
@@ -95,10 +97,11 @@ async function handle(req:Request){
       return new Response(object.body,{headers:{'Content-Type':object.httpMetadata?.contentType||'image/jpeg','Cache-Control':'private, max-age=300','X-Content-Type-Options':'nosniff'}});
     }
     await seed();
-    if(req.method==='GET'&&(path==='stream'||path==='lifecycle')){const result=await checkEpisodes(db(),env.BUCKET);return json(path==='stream'?result.broadcast:{ok:true,checkedAt:result.broadcast.checkedAt,stale:result.stale,created:result.created,ended:result.ended,newsletter:result.newsletter});}
+    if(req.method==='GET'&&(path==='stream'||path==='lifecycle')){const result=await checkEpisodes(db(),env.BUCKET);return json(path==='stream'?result.broadcast:{ok:true,checkedAt:result.broadcast.checkedAt,stale:result.stale,created:result.created,ended:result.ended,newsletter:result.newsletter,timing:result.timing});}
     if(req.method==='GET'&&path==='events')return await stream(req,url.searchParams.get('room')||SAMPLE_ROOM.id);
     const who=await identity(req);
     const community=req.method==='GET'?await communityServices(req,url,path,undefined,who,db(),{checkText,rate,log}):null;if(community)return community;
+    const timed=req.method==='GET'?await timingServices(req,url,path,undefined,who,db()):null;if(timed)return timed;
     const extra=req.method==='GET'?await roomServices(req,url,path,undefined,who,db(),{checkText,rate,log}):null;if(extra)return extra;
     if(req.method==='GET'&&path==='state'){
       if(!url.searchParams.get('room'))await checkEpisodes(db(),env.BUCKET);
@@ -113,9 +116,9 @@ async function handle(req:Request){
       const limit=Number(await setting('submissionLimit','3'));
       const stats=await db().prepare("SELECT COUNT(*) votes,COUNT(DISTINCT userId) participants FROM votes WHERE itemId IN (SELECT id FROM moments WHERE roomId=? AND status='approved')").bind(roomId).first();
       const pending=who.userId?(await db().prepare("SELECT id,title,status FROM moments WHERE createdBy=? AND roomId=? AND status!='approved' ORDER BY createdAt DESC").bind(who.userId,roomId).all()).results:[];
-      const shared=await sharedBoard(roomId);
+      const shared=await sharedBoard(roomId),timings=await timingState(db(),roomId);
       const online=(await db().prepare('SELECT COUNT(*) n FROM presence WHERE roomId=? AND seenAt>?').bind(roomId,now()-45000).first<{n:number}>())?.n||0;
-      return json({...await communityState(db(),roomId,who.userId),rooms,room,moments:moments.map(m=>{let credit=null;try{const c=JSON.parse(String(m.imageCredit||'null'));if(c?.image===m.image)credit=c;}catch{}return {...m,imageCredit:credit};}),shared,revision:room.revision,catalogRevision:Number(await setting('catalogRevision','0')),uploads:await uploadQuota(),online,mine,hasBoard,used,limit,stats,pending,verified:who.verified,admin:who.admin,canModerate:await canModerate(who,db()),account:who.account?{email:who.account.email,name:who.account.displayName}:null,verification:env.TURNSTILE_SITE_KEY&&env.TURNSTILE_SECRET_KEY?'turnstile':'browser',siteKey:env.TURNSTILE_SITE_KEY&&env.TURNSTILE_SECRET_KEY?env.TURNSTILE_SITE_KEY:null});
+      return json({...await communityState(db(),roomId,who.userId),rooms,room,moments:moments.map(m=>{let credit=null;try{const c=JSON.parse(String(m.imageCredit||'null'));if(c?.image===m.image)credit=c;}catch{}const timing=timings[String(m.id)];return {...m,imageCredit:credit,timestamp:timing?timing.seconds??0:m.timestamp,hasTimestamp:timing?timing.seconds!==null:Number(m.timestamp)>0,timing:timing||null};}),shared,revision:room.revision,catalogRevision:Number(await setting('catalogRevision','0')),uploads:await uploadQuota(),online,mine,hasBoard,used,limit,stats,pending,verified:who.verified,admin:who.admin,canModerate:await canModerate(who,db()),account:who.account?{email:who.account.email,name:who.account.displayName}:null,verification:env.TURNSTILE_SITE_KEY&&env.TURNSTILE_SECRET_KEY?'turnstile':'browser',siteKey:env.TURNSTILE_SITE_KEY&&env.TURNSTILE_SECRET_KEY?env.TURNSTILE_SITE_KEY:null});
     }
     if(req.method==='GET'&&path==='admin'){
       if(!who.admin)throw new ApiError('Admin sign-in required.',403);
@@ -164,6 +167,7 @@ async function handle(req:Request){
       return json({ok:true},200,{'Set-Cookie':'onair_session=; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=0'});
     }
     const communityWrite=await communityServices(req,url,path,b,who,db(),{checkText,rate,log});if(communityWrite)return communityWrite;
+    const timingWrite=await timingServices(req,url,path,b,who,db());if(timingWrite)return timingWrite;
     const service=await roomServices(req,url,path,b,who,db(),{checkText,rate,log});if(service)return service;
     if(path==='presence'){
       const roomId=str(b.roomId,100,true);
@@ -208,6 +212,7 @@ async function handle(req:Request){
       const image=await storeImage(b.image),id=identifier();
       const insert=db().prepare(`INSERT INTO moments (id,roomId,title,description,category,timestamp,image,status,createdBy,ipHash,createdAt) SELECT ?,?,?,?,?,?,?,?,?,?,? WHERE (?=1 OR (SELECT COUNT(*) FROM moments WHERE roomId=? AND (createdBy=? OR ipHash=?))<?) AND (SELECT COUNT(*) FROM moments WHERE roomId=? AND status='approved')<300 RETURNING id`).bind(id,roomId,title,description,category,timestamp,image?.url||null,who.admin?'approved':'pending',who.userId,who.ipHash,now(),who.admin?1:0,roomId,who.userId,who.ipHash,limit,roomId);
       let inserted;try{const results=await db().batch([insert,
+        ...(b.hasTimestamp||timestamp>0?[db().prepare("INSERT INTO moment_timings (itemId,roomId,seconds,source,locked,version,evidence,updatedAt) SELECT ?,?,?,?,1,1,'Captured from player or supplied by author',? WHERE EXISTS (SELECT 1 FROM moments WHERE id=?)").bind(id,roomId,timestamp,who.admin?'admin':'author',now(),id)]:[]),
         ...(who.admin?[db().prepare('INSERT INTO placements (roomId,itemId,tier,score,position,version,updatedAt) SELECT ?,?,?,?,?,1,? WHERE EXISTS (SELECT 1 FROM moments WHERE id=?)').bind(roomId,id,tier,TIERS.find(t=>t.id===tier)?.value??50,now(),now(),id)]:[]),
         db().prepare('UPDATE rooms SET revision=revision+1 WHERE id=? AND EXISTS (SELECT 1 FROM moments WHERE id=?)').bind(roomId,id)
       ]);inserted=results[0].results[0];}catch(e){await discardImage(image);throw e;}
@@ -227,11 +232,11 @@ async function handle(req:Request){
         const id=str(b.id,100,true),version=Number(b.version),{title,description,category,timestamp}=momentFields(b);
         if(!Number.isInteger(version)||version<1)throw new ApiError('Invalid edit version.');
         await checkText(title+' '+description);
-        const current=await db().prepare('SELECT image,roomId,version FROM moments WHERE id=?').bind(id).first<{image:string|null;roomId:string;version:number}>();
+        const current=await db().prepare('SELECT image,roomId,version,timestamp FROM moments WHERE id=?').bind(id).first<{image:string|null;roomId:string;version:number;timestamp:number}>();
         if(!current)throw new ApiError('Moment not found.',404);if(current.version!==version)throw new ApiError('This moment changed while you were editing. Reopen it to edit the latest version.',409);
         const uploaded=await storeImage(b.image);
         const image=uploaded?.url||(b.removeImage?null:current.image);
-        let changed;try{changed=await db().prepare('UPDATE moments SET title=?,description=?,category=?,timestamp=?,image=?,version=version+1 WHERE id=? AND version=? RETURNING id').bind(title,description,category,timestamp,image,id,version).first();}catch(e){await discardImage(uploaded);throw e;}
+        let changed;try{changed=await db().prepare('UPDATE moments SET title=?,description=?,category=?,timestamp=?,image=?,version=version+1 WHERE id=? AND version=? RETURNING id').bind(title,description,category,b.timestamp===undefined?current.timestamp:timestamp,image,id,version).first();}catch(e){await discardImage(uploaded);throw e;}
         if(!changed){await discardImage(uploaded);throw new ApiError('This moment changed while you were editing. Reopen it and try again.',409);}
         await touch(current.roomId);
         if(current.image&&current.image!==image)await env.BUCKET?.delete(current.image.split('/').pop()!);

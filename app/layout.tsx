@@ -5,6 +5,7 @@ import "./compact-board.css";
 import "./floating-player.css";
 import "./live-chat.css";
 import "./community.css";
+import "./moment-timing.css";
 
 export const metadata: Metadata = {
   title: "ON AIR — The TBPN Tier Room",

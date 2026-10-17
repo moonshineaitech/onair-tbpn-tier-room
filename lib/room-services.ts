@@ -1,3 +1,4 @@
+import {promoteChatTiming,invalidateCommunityTiming} from './moment-timing';
 import {showImportStatus,controlShowImport} from './show-import';
 import {CATEGORIES} from './room-data';
 import {parseNewsletterFeed} from './newsletter';
@@ -15,7 +16,8 @@ export async function roomServices(req:Request,url:URL,path:string,b:any,who:Vis
  if(req.method==='GET'&&path==='chat'){
    const roomId=field(url.searchParams.get('room'),100,true);
    if(!await database.prepare('SELECT id FROM rooms WHERE id=?').bind(roomId).first())throw new ServiceError('Room not found.',404);
-   const rows=(await database.prepare("SELECT id,userId,author,role,body,createdAt FROM chat_messages WHERE roomId=? AND status='visible' ORDER BY createdAt DESC,id DESC LIMIT 100").bind(roomId).all<{id:string;userId:string;author:string;role:string;body:string;createdAt:number}>()).results;
+   const topic=url.searchParams.get('moment')||'';
+   const rows=(await database.prepare("SELECT id,userId,author,role,body,createdAt,videoSeconds,videoId,momentId FROM chat_messages WHERE roomId=? AND status='visible' AND (?='' OR momentId=?) ORDER BY createdAt DESC,id DESC LIMIT 100").bind(roomId,topic,topic).all<{id:string;userId:string;author:string;role:string;body:string;createdAt:number}>()).results;
    const mute=who.userId?await database.prepare('SELECT MAX(until) until FROM chat_mutes WHERE roomId=? AND (userId=? OR ipHash=?) AND until>?').bind(roomId,who.userId,who.ipHash,time).first<{until:number}>():null;
    return reply({messages:rows.reverse().map(({userId,...row})=>({...row,own:userId===who.userId})),muteUntil:mute?.until||0,canModerate:await canModerate(who,database),suggestedName:who.admin?'Ryan':`Guest ${who.userId?.slice(-4)||''}`});
  }
@@ -45,15 +47,24 @@ export async function roomServices(req:Request,url:URL,path:string,b:any,who:Vis
    if(!/^[a-f0-9-]{36}$/.test(id))throw new ServiceError('Invalid message identifier.');
    await deps.checkText(body+' '+author);
    if(!await database.prepare('SELECT id FROM rooms WHERE id=?').bind(roomId).first())throw new ServiceError('Room not found.',404);
+   let videoSeconds:number|null=null,videoId:string|null=null,momentId:string|null=null;
+   if(b.videoSeconds!==undefined&&b.videoSeconds!==null){
+    const room=await database.prepare('SELECT videoId FROM rooms WHERE id=?').bind(roomId).first<{videoId:string|null}>();
+    if(!Number.isInteger(b.videoSeconds)||b.videoSeconds<0||b.videoSeconds>86400||!room?.videoId||b.videoId!==room.videoId||!/^[-\w]{11}$/.test(b.videoId))throw new ServiceError('The player timestamp must belong to this episode.');
+    const timing=await config(database,'timingSync:'+b.videoId,'null');const bound=timing?.live&&timing.startedAt?Math.max(timing.duration||0,(time-timing.startedAt)/1000):timing?.duration;if(bound>0&&b.videoSeconds>bound+60)throw new ServiceError('This timestamp is beyond the episode.');
+    videoSeconds=b.videoSeconds;videoId=b.videoId;
+   }
+   if(b.momentId){const moment=await database.prepare("SELECT id FROM moments WHERE id=? AND roomId=? AND status='approved'").bind(String(b.momentId),roomId).first<{id:string}>();if(!moment)throw new ServiceError('Choose a moment from this board.');momentId=moment.id;}
    const existing=await database.prepare('SELECT userId,body FROM chat_messages WHERE id=?').bind(id).first<{userId:string;body:string}>();
    if(existing){if(existing.userId!==who.userId||existing.body!==body)throw new ServiceError('Please retry this message.',409);return reply({ok:true,id});}
    await deps.rate('chat:'+who.userId,15);await deps.rate('chat-network:'+who.ipHash,45);
    const role=who.admin?'admin':await canModerate(who,database)?'moderator':'member';
    const results=await database.batch([
-     database.prepare("INSERT INTO chat_messages (id,roomId,userId,ipHash,author,role,body,status,createdAt) SELECT ?,?,?,?,?,?,?,'visible',? WHERE NOT EXISTS (SELECT 1 FROM chat_mutes WHERE roomId=? AND (userId=? OR ipHash=?) AND until>?) RETURNING id").bind(id,roomId,who.userId,who.ipHash,author,role,body,time,roomId,who.userId,who.ipHash,time),
+     database.prepare("INSERT INTO chat_messages (id,roomId,userId,ipHash,author,role,body,status,createdAt,videoSeconds,videoId,momentId) SELECT ?,?,?,?,?,?,?,'visible',?,?,?,? WHERE NOT EXISTS (SELECT 1 FROM chat_mutes WHERE roomId=? AND (userId=? OR ipHash=?) AND until>?) RETURNING id").bind(id,roomId,who.userId,who.ipHash,author,role,body,time,videoSeconds,videoId,momentId,roomId,who.userId,who.ipHash,time),
      database.prepare('UPDATE rooms SET chatRevision=chatRevision+1 WHERE id=? AND EXISTS (SELECT 1 FROM chat_messages WHERE id=?)').bind(roomId,id)
    ]);
    if(!results[0].results.length)throw new ServiceError('You are temporarily muted in this room.',403);
+   if(momentId&&videoSeconds!==null)await promoteChatTiming(database,roomId,momentId,videoSeconds);
    return reply({ok:true,id},201);
  }
  if(path==='chat/moderate'){
@@ -70,6 +81,7 @@ export async function roomServices(req:Request,url:URL,path:string,b:any,who:Vis
      const reason=field(b.reason||'Room moderation',200);
      await database.batch([database.prepare('INSERT INTO chat_mutes (id,roomId,userId,ipHash,author,until,reason) VALUES (?,?,?,?,?,?,?) ON CONFLICT(roomId,userId) DO UPDATE SET until=excluded.until,reason=excluded.reason').bind(crypto.randomUUID(),message.roomId,message.userId,message.ipHash,message.author,time+minutes*60000,reason),chatTouch(database,message.roomId)]);
    }else throw new ServiceError('Unknown moderation action.');
+   await invalidateCommunityTiming(database,message.roomId);
    await deps.log(who.account?.email||who.userId!,'chat:'+b.action,message.id);return reply({ok:true});
  }
  if(path==='chat/admin'){

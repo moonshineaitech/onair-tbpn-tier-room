@@ -1,11 +1,12 @@
 'use client';
+import type {PlaybackClock} from '@/lib/playback-clock';
 import {useCallback,useEffect,useRef,useState} from 'react';
 import {ChevronDown,ChevronUp,ExternalLink,Maximize2,Minimize2,Pause,Play,Radio,Volume2,VolumeX,X,RotateCcw} from 'lucide-react';
 import {inShowWindow,SHOW_SCHEDULE} from '@/lib/show-schedule';
 import {FALLBACK_REPLAY,type Broadcast,type BroadcastVideo} from '@/lib/tbpn-stream';
 
 export type PlaybackRequest={id:number;videoId:string|null;start:number;title:string};
-type Player={playVideo:()=>void;pauseVideo:()=>void;mute:()=>void;unMute:()=>void;setVolume:(n:number)=>void;loadVideoById:(v:{videoId:string;startSeconds?:number})=>void;getDuration:()=>number;seekTo:(seconds:number,allowSeekAhead:boolean)=>void;destroy:()=>void};
+type Player={playVideo:()=>void;pauseVideo:()=>void;mute:()=>void;unMute:()=>void;setVolume:(n:number)=>void;loadVideoById:(v:{videoId:string;startSeconds?:number})=>void;getDuration:()=>number;getCurrentTime:()=>number;getVideoData:()=>{video_id?:string};seekTo:(seconds:number,allowSeekAhead:boolean)=>void;destroy:()=>void};
 type Youtube={Player:new(element:HTMLElement,options:unknown)=>Player};
 type YoutubeWindow=Window&{YT?:Youtube;onYouTubeIframeAPIReady?:()=>void};
 let youtubeReady:Promise<Youtube>|null=null;
@@ -20,9 +21,10 @@ function youtube(){
  });return youtubeReady;
 }
 type Mode='mini'|'expanded'|'collapsed';
-type Props={open:boolean;reveal:number;onOpen:()=>void;onClose:()=>void;request:PlaybackRequest|null};
-export default function FloatingPlayer({open,reveal,onOpen,onClose,request}:Props){
+type Props={open:boolean;reveal:number;onOpen:()=>void;onClose:()=>void;request:PlaybackRequest|null;onClock?:(clock:PlaybackClock|null)=>void};
+export default function FloatingPlayer({open,reveal,onOpen,onClose,request,onClock}:Props){
  const [broadcast,setBroadcast]=useState<Broadcast|null>(null),[mode,setMode]=useState<Mode>('mini'),[manual,setManual]=useState<(BroadcastVideo&{start:number;requestId:number})|null>(null),[volume,setVolume]=useState(70),[volumeOpen,setVolumeOpen]=useState(false),[muted,setMuted]=useState(true),[playing,setPlaying]=useState(false),[ready,setReady]=useState(false),[blocked,setBlocked]=useState(false),[error,setError]=useState(''),[retry,setRetry]=useState(0);
+ const clockCallback=useRef(onClock);clockCallback.current=onClock;
  const lastCheck=useRef(0),volumeRoot=useRef<HTMLDivElement>(null),volumeRef=useRef(70),host=useRef<HTMLDivElement>(null),player=useRef<Player|null>(null),playerReady=useRef(false),mutedRef=useRef(true),modeBeforeCollapse=useRef<Mode>('mini'),livePositioned=useRef<string|null>(null);
  const active=manual||broadcast?.selected,activeRef=useRef(active);activeRef.current=active;
  const start=manual?.start||0,startRef=useRef(start);startRef.current=start;
@@ -45,6 +47,7 @@ export default function FloatingPlayer({open,reveal,onOpen,onClose,request}:Prop
    return()=>{cancelled=true;playerReady.current=false;player.current?.destroy();player.current=null;};
  },[open,!!active,retry,jumpToLive]);
  useEffect(()=>{if(playerReady.current&&active){setError('');setBlocked(false);livePositioned.current=null;player.current?.loadVideoById(active.isLive?{videoId:active.videoId}:{videoId:active.videoId,startSeconds:start});}},[active?.videoId,manual?.requestId,start]);
+ useEffect(()=>{const tick=()=>{const target=player.current,current=activeRef.current;if(!open||!target||!playerReady.current||!current){clockCallback.current?.(null);return;}try{const seconds=target.getCurrentTime(),data=target.getVideoData();if(data.video_id!==current.videoId||!Number.isFinite(seconds)||seconds<0){clockCallback.current?.(null);return;}clockCallback.current?.({videoId:current.videoId,seconds,duration:target.getDuration(),live:current.isLive,playing,sampledAt:Date.now()});}catch{clockCallback.current?.(null);}};tick();const timer=setInterval(tick,1000);return()=>{clearInterval(timer);clockCallback.current?.(null);};},[open,playing,active?.videoId]);
  useEffect(()=>{if(!volumeOpen)return;const outside=(e:PointerEvent)=>{if(!volumeRoot.current?.contains(e.target as Node))setVolumeOpen(false);};const key=(e:KeyboardEvent)=>{if(e.key==='Escape')setVolumeOpen(false);};document.addEventListener('pointerdown',outside);document.addEventListener('keydown',key);return()=>{document.removeEventListener('pointerdown',outside);document.removeEventListener('keydown',key);};},[volumeOpen]);
  function sound(){if(!player.current||!ready)return;const next=!muted;mutedRef.current=next;setMuted(next);if(next)player.current.mute();else{if(!volumeRef.current){volumeRef.current=70;setVolume(70);}player.current.unMute();player.current.setVolume(volumeRef.current);player.current.playVideo();}}
  function adjustVolume(value:number){volumeRef.current=value;setVolume(value);mutedRef.current=value===0;setMuted(value===0);player.current?.setVolume(value);if(value)player.current?.unMute();else player.current?.mute();}
