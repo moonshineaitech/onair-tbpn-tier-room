@@ -1,10 +1,10 @@
 'use client';
 import {useState} from 'react';
-import {Check,ExternalLink,Send,Settings2,Link2} from 'lucide-react';
+import {Check,ExternalLink,Send,Settings2,Link2,Share2} from 'lucide-react';
 import type {RoomState} from '@/lib/room-data';
-export function PersonalBoardControls({state,ranked,saving,settings,publish}:{state:RoomState;ranked:number;saving:boolean;settings:()=>void;publish:()=>void}){
+export function PersonalBoardControls({state,ranked,saving,settings,publish,share}:{state:RoomState;ranked:number;saving:boolean;settings:()=>void;publish:()=>void;share:()=>void}){
  const posted=!!state.personalBoard?.publishedId,ended=state.episode?.phase==='ended'||state.room.status==='closed';
- return <div className="personal-board-controls"><div><b>{state.personalBoard?.title||'Your show, your rankings.'}</b><span>{ranked}/{state.moments.length} ranked · {state.personalBoard?.autoPublish===false?'Auto-post off':ended?'Show ended · ready to post':'Auto-post at show end'} · {saving?'Syncing rankings…':state.account?'Saved to your account':'Saved for this browser'}</span></div><button aria-label="Board settings" onClick={settings}><Settings2 size={13}/><span>Board settings</span></button><button className="publish-board" disabled={saving||!ranked} onClick={publish}>{posted?<Check size={13}/>:<Send size={13}/>}<span>{posted?'Update post':ended?'Post my board':'Post now'}</span></button></div>;
+ return <div className="personal-board-controls"><div><b>{state.personalBoard?.title||'Your show, your rankings.'}</b><span>{ranked}/{state.moments.length} ranked · {state.personalBoard?.autoPublish===false?'Auto-post off':ended?'Show ended · ready to post':'Auto-post at show end'} · {saving?'Syncing rankings…':state.account?'Saved to your account':'Saved for this browser'}</span></div><button aria-label="Board settings" onClick={settings}><Settings2 size={13}/><span>Board settings</span></button>{posted?<button className="personal-share-button" aria-label="Share published board" onClick={share}><Share2 size={13}/><span>Share</span></button>:null}<button className="publish-board" disabled={saving||!ranked} onClick={publish}>{posted?<Check size={13}/>:<Send size={13}/>}<span>{posted?'Update post':ended?'Publish & share':'Post & share'}</span></button></div>;
 }
 export function PersonalBoardSettings({state,save,publish,withdraw,ready}:{state:RoomState;save:(body:unknown)=>Promise<void>;publish:()=>void;withdraw:()=>Promise<void>;ready:boolean}){
  const board=state.personalBoard,[title,setTitle]=useState(board?.title||'My show rankings'),[byline,setByline]=useState(board?.byline||'Viewer'),[auto,setAuto]=useState(board?.autoPublish??true),[busy,setBusy]=useState(false),[error,setError]=useState(''),[saved,setSaved]=useState(false);

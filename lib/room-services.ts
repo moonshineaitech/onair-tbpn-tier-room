@@ -15,11 +15,11 @@ export async function roomServices(req:Request,url:URL,path:string,b:any,who:Vis
  const time=Date.now();
  if(req.method==='GET'&&path==='chat'){
    const roomId=field(url.searchParams.get('room'),100,true);
-   if(!await database.prepare('SELECT id FROM rooms WHERE id=?').bind(roomId).first())throw new ServiceError('Room not found.',404);
+   const room=await database.prepare('SELECT chatRevision FROM rooms WHERE id=?').bind(roomId).first<{chatRevision:number}>();if(!room)throw new ServiceError('Room not found.',404);
    const topic=url.searchParams.get('moment')||'';
    const rows=(await database.prepare("SELECT id,userId,author,role,body,createdAt,videoSeconds,videoId,momentId FROM chat_messages WHERE roomId=? AND status='visible' AND (?='' OR momentId=?) ORDER BY createdAt DESC,id DESC LIMIT 100").bind(roomId,topic,topic).all<{id:string;userId:string;author:string;role:string;body:string;createdAt:number}>()).results;
    const mute=who.userId?await database.prepare('SELECT MAX(until) until FROM chat_mutes WHERE roomId=? AND (userId=? OR ipHash=?) AND until>?').bind(roomId,who.userId,who.ipHash,time).first<{until:number}>():null;
-   return reply({messages:rows.reverse().map(({userId,...row})=>({...row,own:userId===who.userId})),muteUntil:mute?.until||0,canModerate:await canModerate(who,database),suggestedName:who.admin?'Ryan':`Guest ${who.userId?.slice(-4)||''}`});
+   return reply({messages:rows.reverse().map(({userId,...row})=>({...row,own:userId===who.userId})),revision:room.chatRevision,muteUntil:mute?.until||0,canModerate:await canModerate(who,database),suggestedName:who.admin?'Ryan':`Guest ${who.userId?.slice(-4)||''}`});
  }
  if(req.method==='GET'&&path==='chat/admin'){
    if(!who.admin)throw new ServiceError('Admin access required.',403);
@@ -55,8 +55,8 @@ export async function roomServices(req:Request,url:URL,path:string,b:any,who:Vis
     videoSeconds=b.videoSeconds;videoId=b.videoId;
    }
    if(b.momentId){const moment=await database.prepare("SELECT id FROM moments WHERE id=? AND roomId=? AND status='approved'").bind(String(b.momentId),roomId).first<{id:string}>();if(!moment)throw new ServiceError('Choose a moment from this board.');momentId=moment.id;}
-   const existing=await database.prepare('SELECT userId,body FROM chat_messages WHERE id=?').bind(id).first<{userId:string;body:string}>();
-   if(existing){if(existing.userId!==who.userId||existing.body!==body)throw new ServiceError('Please retry this message.',409);return reply({ok:true,id});}
+   const existing=await database.prepare('SELECT userId,roomId,status,body,author,role,createdAt,videoSeconds,videoId,momentId FROM chat_messages WHERE id=?').bind(id).first<{userId:string;roomId:string;status:string;body:string;author:string;role:string;createdAt:number;videoSeconds:number|null;videoId:string|null;momentId:string|null}>();
+   if(existing){if(existing.userId!==who.userId||existing.roomId!==roomId||existing.body!==body)throw new ServiceError('Please retry this message.',409);if(existing.status!=='visible')throw new ServiceError('This message has been removed.',409);const {userId:_owner,roomId:_room,status:_status,...message}=existing;return reply({ok:true,id,message:{...message,id,own:true}});}
    await deps.rate('chat:'+who.userId,15);await deps.rate('chat-network:'+who.ipHash,45);
    const role=who.admin?'admin':await canModerate(who,database)?'moderator':'member';
    const results=await database.batch([
@@ -65,7 +65,7 @@ export async function roomServices(req:Request,url:URL,path:string,b:any,who:Vis
    ]);
    if(!results[0].results.length)throw new ServiceError('You are temporarily muted in this room.',403);
    if(momentId&&videoSeconds!==null)await promoteChatTiming(database,roomId,momentId,videoSeconds);
-   return reply({ok:true,id},201);
+   return reply({ok:true,id,message:{id,author,role,body,createdAt:time,videoSeconds,videoId,momentId,own:true}},201);
  }
  if(path==='chat/moderate'){
    const message=await database.prepare('SELECT id,roomId,userId,ipHash,author,role FROM chat_messages WHERE id=?').bind(field(b.id,36,true)).first<{id:string;roomId:string;userId:string;ipHash:string;author:string;role:string}>();
