@@ -10,6 +10,7 @@ import "./episode-navigation.css";
 import "./quick-share.css";
 import "./board-comparison.css";
 import "./stream-platform.css";
+import "./prediction-room.css";
 
 export const metadata: Metadata = {
   title: "ON AIR — The Live Tier Room",

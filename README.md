@@ -142,3 +142,12 @@ Pasting a supported HTTPS stream link calls the server metadata lookup, previews
 The homepage serves saved rooms immediately, then checks up to six due sources in parallel; a shared lease prevents duplicate refresh batches. Visible homepages refresh every thirty seconds, and selected boards refresh their own source every minute. Confirmed live rooms sort first across the complete server-paginated directory, with Live now filtering and a Join & rank action. Live labels expire after three minutes without confirmation. YouTube channels use the detected broadcast ID for playback and platform chat while retaining their channel source. Custom room names, rankings, and source links remain independent from refreshed provider titles. The current implementation refreshes on visitor activity; it does not claim unattended monitoring of arbitrary channels.
 
 `scripts/test-stream-metadata.mjs` exercises provider fixtures, redirects, response limits, freshness, deduplication, outages, source changes, and live-first pagination. The existing platform and directory suites cover host permissions and durable room creation.
+
+
+## Nashville 2026 prediction board
+
+`/thiel-nashville-2026` opens the requested Peter Thiel Antichrist prediction room directly. Its public catalog contains twelve public-figure options and four alternative outcomes, with local illustrated monograms. The organizer’s event listing is linked for context. The page identifies the choices as speculative predictions about Thiel’s remarks and does not assert that he has named any option or that a livestream exists.
+
+All picks start Unranked. S through F labels describe likelihood for this room while ordinary stream-room labels remain unchanged. Shared rankings, independent personal boards, consensus, chat, moderation, snapshot sharing, and comparisons use the existing persistent backend. Dedicated links preserve the selected room without needing a query parameter; published-board metadata and preview images identify predictions.
+
+`ensureThielPredictions` initializes this explicitly requested catalog in an atomic, idempotent D1 batch outside schema migrations. Repeated reads preserve admin edits and hidden picks and never create votes, placements, reactions, or audience posts. Site admins can edit the catalog through the normal board controls. `scripts/test-thiel-predictions.mjs` verifies initialization, moderation preservation, zero fabricated audience data, scoped tier labels, and canonical share URLs.

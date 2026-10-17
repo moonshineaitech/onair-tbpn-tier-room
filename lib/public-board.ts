@@ -9,7 +9,7 @@ export async function publicBoard(database:D1Database,id:string,roomId=''):Promi
  const approved=new Set(moments.map(m=>m.id)),seen=new Set<string>();let saved:unknown;try{saved=JSON.parse(row.entries);}catch{return null;}if(!Array.isArray(saved))return null;
  const entries:Vote[]=saved.filter((e):e is Vote=>{if(!e||typeof e.itemId!=='string'||!approved.has(e.itemId)||seen.has(e.itemId)||!TIERS.some(t=>t.id===e.tier)||!Number.isFinite(e.score)||e.score<0||e.score>100)return false;seen.add(e.itemId);return true;}).map(({itemId,tier,score})=>({itemId,tier,score}));
  const post:BoardPost={id:row.id,roomId:row.roomId,title:row.title,byline:row.byline,entries,createdAt:row.createdAt,updatedAt:row.updatedAt,automatic:!!row.automatic,own:false,reactions:emptyReaction()};
- const fingerprint=JSON.stringify(['board-card-v4',post.id,post.title,post.byline,post.updatedAt,post.entries,row.episodeTitle,moments.map(m=>[m.id,m.title,m.category,m.image])]);
+ const fingerprint=JSON.stringify([row.roomId==='thiel-nashville-2026'?'board-predictions-v1':'board-card-v4',post.id,post.title,post.byline,post.updatedAt,post.entries,row.episodeTitle,moments.map(m=>[m.id,m.title,m.category,m.image])]);
  const version=Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(fingerprint)))).map(n=>n.toString(16).padStart(2,'0')).join('').slice(0,24);
  return {post,room:{id:row.roomId,title:row.episodeTitle},moments,version};
 }

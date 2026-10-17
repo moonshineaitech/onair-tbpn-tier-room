@@ -1,0 +1,17 @@
+.prediction-room { background:#e8e2d1; }
+.prediction-room .app-header { background:#211b19; border-color:#514031; }
+.prediction-room .board-page { background:radial-gradient(ellipse at 95% 0,#dcc6b955,transparent 50%); }
+.prediction-room .page-intro h1 { font-family:Georgia,'Times New Roman',serif; font-weight:500; font-size:clamp(26px,3.2vw,44px); letter-spacing:-1.8px; }
+.prediction-room .page-intro h1>span { color:#975c44; margin-left:10px; }
+.prediction-room .board-eyebrow { color:#7b543d; letter-spacing:1.4px; }
+.prediction-room .episode-mark { color:#89583e; }
+.prediction-note { display:flex; align-items:center; justify-content:space-between; gap:16px; background:#dcd2bd; border:1px solid #c5b798; padding:8px 12px; margin:0 0 10px; border-radius:4px; font-size:10px; line-height:1.5; color:#665541; }
+.prediction-note b { color:#3f3327; margin-right:4px; }
+.prediction-note>a { display:flex; align-items:center; white-space:nowrap; gap:5px; color:#754f35; text-decoration:underline; text-underline-offset:3px; }
+.prediction-room .room-tabbar { margin-bottom:8px; }
+.prediction-room .moment-art img { object-fit:cover; }
+.prediction-room .tier-label>span { font-size:9px; }
+.prediction-room .episode-selector { max-width:365px; }
+.prediction-room .tier-board { min-height:400px; }
+@media(max-width:900px){.prediction-note { align-items:flex-start; font-size:9px; gap:10px; }.prediction-note>a { font-size:9px; }.prediction-room .page-intro h1 { font-size:32px; }.prediction-room .episode-selector { max-width:300px; }}
+@media(max-width:600px){.prediction-note { flex-direction:column; gap:4px; padding:8px 10px; }.prediction-room .page-intro h1 { font-size:30px; letter-spacing:-1px; }.prediction-room .page-intro p { font-size:10px; }.prediction-room .board-eyebrow { font-size:8px; letter-spacing:.9px; }.prediction-room .tier-board { min-height:400px; }}

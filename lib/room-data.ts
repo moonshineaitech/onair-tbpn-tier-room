@@ -7,6 +7,9 @@ export const TIERS = [
   {id:'D',label:'On mute',value:20,color:'#bfff7f'},
   {id:'F',label:'Never again',value:0,color:'#7fff7f'},
 ];
+export function tiersForRoom(roomId:string){const labels=['Most likely','Strong possibility','Plausible','Long shot','Very unlikely','Least likely'];return roomId==='thiel-nashville-2026'?TIERS.map((tier,index)=>({...tier,label:labels[index]})):TIERS;}
+export function roomPath(roomId:string){return roomId==='thiel-nashville-2026'?'/thiel-nashville-2026':'/tier-list?room='+encodeURIComponent(roomId);}
+export function roomQuery(roomId:string){return roomPath(roomId)+(roomId==='thiel-nashville-2026'?'?':'&');}
 export type Moment = {hasTimestamp?:boolean;timing?:{seconds:number|null;source:string;locked:boolean;version:number;evidence:string;updatedAt:number}|null;imageCredit?:{url:string;label:string;kind:string}|null;id:string;roomId:string;title:string;description:string;category:string;timestamp:number;image:string|null;status:string;createdAt:number;version?:number;score?:number;count?:number;tier?:string;sample?:boolean};
 export type Room = {streamPlaybackId?:string|null;streamTitle?:string|null;streamThumbnail?:string|null;streamLiveStatus?:string|null;streamCheckedAt?:number|null;streamStatusCheckedAt?:number|null;episodePhase?:string|null;episodeStartedAt?:number|null;episodeLastLiveAt?:number|null;episodeEndedAt?:number|null;momentCount?:number;id:string;title:string;description:string;videoId:string|null;status:string;createdAt:number;revision?:number};
 export type Placement={itemId:string;tier:string;score:number;position:number;version:number;updatedAt:number};

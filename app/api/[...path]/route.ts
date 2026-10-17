@@ -1,3 +1,4 @@
+import {ensureThielPredictions,THIEL_ROOM_ID} from '@/lib/thiel-predictions';
 import {platformServices} from '@/lib/platform-services';
 import {managesRoom} from '@/lib/room-permissions';
 import {resolveStreamSource} from '@/lib/stream-resolution';
@@ -39,6 +40,7 @@ async function rate(key:string,limit:number,windowMs=60000){
   if((r?.count||0)>limit)throw new ApiError(windowMs>=86400000?'Daily limit reached. Try again after midnight UTC.':windowMs>=3600000?'Hourly limit reached. Please try again later.':'A little too fast. Please try again in a minute.',429);
 }
 async function seed(){
+  await ensureThielPredictions(db());
   const ready=await db().prepare("SELECT COUNT(*) n FROM rooms WHERE id IN ('tbpn-live','the-warm-up')").first<{n:number}>();if(ready?.n===2)return;
   await db().prepare('INSERT OR IGNORE INTO rooms (id,title,description,videoId,status,createdAt) VALUES (?,?,?,?,?,?)').bind(TBPN_LIVE.id,TBPN_LIVE.title,TBPN_LIVE.description,TBPN_LIVE.videoId,'open',TBPN_LIVE.createdAt).run();
   if(await db().prepare("SELECT id FROM rooms WHERE id='the-warm-up'").first())return;
@@ -213,7 +215,7 @@ async function handle(req:Request){
       await rate('vote:'+who.userId,90);
       await db().batch([
         ...(!patch?[db().prepare('DELETE FROM votes WHERE userId=? AND itemId IN (SELECT id FROM moments WHERE roomId=?)').bind(who.userId,roomId)]:[]),
-        db().prepare('INSERT INTO boards (userId,roomId,updatedAt,autoPublish,byline,version) VALUES (?,?,?,1,?,1) ON CONFLICT(userId,roomId) DO UPDATE SET updatedAt=excluded.updatedAt,version=boards.version+1').bind(who.userId,roomId,now(),'Viewer '+who.userId.slice(-4)),
+        db().prepare('INSERT INTO boards (userId,roomId,updatedAt,autoPublish,byline,version,title) VALUES (?,?,?,1,?,1,?) ON CONFLICT(userId,roomId) DO UPDATE SET updatedAt=excluded.updatedAt,version=boards.version+1').bind(who.userId,roomId,now(),'Viewer '+who.userId.slice(-4),roomId===THIEL_ROOM_ID?'My Nashville predictions':'My show rankings'),
         ...rows.map((v:{id:string;tier:string;score:number})=>v.tier==='U'?db().prepare('DELETE FROM votes WHERE userId=? AND itemId=?').bind(who.userId,v.id):db().prepare('INSERT INTO votes (userId,itemId,tier,score,updatedAt) VALUES (?,?,?,?,?) ON CONFLICT(userId,itemId) DO UPDATE SET tier=excluded.tier,score=excluded.score,updatedAt=excluded.updatedAt').bind(who.userId,v.id,v.tier,v.score,now())),
         db().prepare('UPDATE rooms SET revision=revision+1 WHERE id=?').bind(roomId)
       ]);
@@ -262,7 +264,7 @@ async function handle(req:Request){
         let changed;try{changed=await db().prepare('UPDATE moments SET title=?,description=?,category=?,timestamp=?,image=?,version=version+1 WHERE id=? AND version=? RETURNING id').bind(title,description,category,b.timestamp===undefined?current.timestamp:timestamp,image,id,version).first();}catch(e){await discardImage(uploaded);throw e;}
         if(!changed){await discardImage(uploaded);throw new ApiError('This moment changed while you were editing. Reopen it and try again.',409);}
         await touch(current.roomId);
-        if(current.image&&current.image!==image)await env.BUCKET?.delete(current.image.split('/').pop()!);
+        const priorUpload=current.image?.match(/^\/api\/image\/([a-f0-9-]{36})$/)?.[1];if(priorUpload&&current.image!==image)await env.BUCKET?.delete(priorUpload);
       }else if(b.action==='settings'){
         if(!Array.isArray(b.blockedWords)||b.blockedWords.length>300)throw new ApiError('Use up to 300 blocked words.');
         const words=Array.from(new Set(b.blockedWords.map((w:unknown)=>str(w,60,true))));const limit=Number(b.submissionLimit);if(!Number.isInteger(limit)||limit<1||limit>10)throw new ApiError('Use a submission limit from 1 to 10.');
