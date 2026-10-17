@@ -9,16 +9,16 @@ export function automaticPosts(database:D1Database,roomId:string,time=Date.now()
  return database.prepare(`INSERT INTO board_posts (id,roomId,userId,title,byline,entries,createdAt,updatedAt,automatic,status)
  SELECT lower(hex(randomblob(16))),b.roomId,b.userId,b.title,b.byline,
  (SELECT json_group_array(json_object('itemId',v.itemId,'tier',v.tier,'score',v.score)) FROM votes v JOIN moments m ON m.id=v.itemId WHERE v.userId=b.userId AND m.roomId=b.roomId AND m.status='approved'),?,?,1,'visible'
- FROM boards b WHERE b.roomId=? AND b.autoPublish=1 AND EXISTS (SELECT 1 FROM votes v JOIN moments m ON m.id=v.itemId WHERE v.userId=b.userId AND m.roomId=b.roomId AND m.status='approved')
+ FROM boards b WHERE b.roomId=? AND b.autoPublish=1 AND NOT EXISTS (SELECT 1 FROM settings WHERE key='episodeEnded:'||b.roomId) AND EXISTS (SELECT 1 FROM votes v JOIN moments m ON m.id=v.itemId WHERE v.userId=b.userId AND m.roomId=b.roomId AND m.status='approved')
  ON CONFLICT(roomId,userId) DO UPDATE SET entries=excluded.entries,title=excluded.title,byline=excluded.byline,updatedAt=excluded.updatedAt,automatic=1 WHERE board_posts.status='visible'`).bind(time,time,roomId);
 }
 export async function finishEpisode(database:D1Database,roomId:string,time=Date.now()){
  const marker='episodeEnded:'+roomId;if(await database.prepare('SELECT key FROM settings WHERE key=?').bind(marker).first())return;
  await database.batch([
-  database.prepare("UPDATE episodes SET phase='ended',endedAt=COALESCE(endedAt,?) WHERE roomId=?").bind(time,roomId),
+  database.prepare("UPDATE episodes SET phase='ended',endedAt=COALESCE(endedAt,?) WHERE roomId=? AND NOT EXISTS (SELECT 1 FROM settings WHERE key='episodeEnded:'||episodes.roomId)").bind(time,roomId),
   automaticPosts(database,roomId,time),
-  database.prepare('UPDATE boards SET publishedId=(SELECT id FROM board_posts p WHERE p.roomId=boards.roomId AND p.userId=boards.userId) WHERE roomId=? AND autoPublish=1').bind(roomId),
-  database.prepare('UPDATE rooms SET revision=revision+1 WHERE id=?').bind(roomId),
+  database.prepare("UPDATE boards SET publishedId=(SELECT id FROM board_posts p WHERE p.roomId=boards.roomId AND p.userId=boards.userId) WHERE roomId=? AND autoPublish=1 AND NOT EXISTS (SELECT 1 FROM settings WHERE key='episodeEnded:'||boards.roomId)").bind(roomId),
+  database.prepare("UPDATE rooms SET revision=revision+1 WHERE id=? AND NOT EXISTS (SELECT 1 FROM settings WHERE key='episodeEnded:'||rooms.id)").bind(roomId),
   database.prepare('INSERT OR IGNORE INTO settings (key,value) VALUES (?,?)').bind(marker,String(time))
  ]);
 }

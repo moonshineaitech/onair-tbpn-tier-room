@@ -54,7 +54,7 @@ export default function FloatingPlayer({open,reveal,onOpen,onClose,request,onClo
  function playback(){if(!player.current||!ready)return;if(playing)player.current.pauseVideo();else player.current.playVideo();}
  function collapse(){setVolumeOpen(false);if(mode==='collapsed')setMode(modeBeforeCollapse.current);else{modeBeforeCollapse.current=mode;setMode('collapsed');}}
  const live=!!active?.isLive&&!broadcast?.stale&&!manual,label=!active?'CONNECTING':manual?'EPISODE':live?'LIVE NOW':broadcast?.stale?'TBPN REPLAY':'LATEST FULL SHOW';
- const url='https://www.youtube.com/watch?v='+(active?.videoId||FALLBACK_REPLAY.videoId);
+ const url='https://www.youtube.com/watch?v='+(active?.videoId||FALLBACK_REPLAY.videoId)+(manual?'&t='+Math.floor(start)+'s':'');
  if(!open)return <button className="floating-reopen" onClick={onOpen}><Radio size={14}/><span>Watch TBPN</span><ChevronUp size={14}/></button>;
  return <aside id="stream-panel" className={`floating-player player-${mode}`} aria-label="TBPN floating video player">
    <header className="floating-player-header"><button className="floating-player-brand" onClick={()=>{if(mode==='collapsed')collapse();}} aria-label={mode==='collapsed'?'Restore TBPN player':'TBPN player'}><span className="floating-tbpn" title={SHOW_SCHEDULE}>TBPN</span><span className={'floating-badge '+(live?'is-live':'')}>{live?<i/>:null}{label}</span></button><div className="floating-window-controls">

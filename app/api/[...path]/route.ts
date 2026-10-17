@@ -118,7 +118,7 @@ async function handle(req:Request){
       const pending=who.userId?(await db().prepare("SELECT id,title,status FROM moments WHERE createdBy=? AND roomId=? AND status!='approved' ORDER BY createdAt DESC").bind(who.userId,roomId).all()).results:[];
       const shared=await sharedBoard(roomId),timings=await timingState(db(),roomId);
       const online=(await db().prepare('SELECT COUNT(*) n FROM presence WHERE roomId=? AND seenAt>?').bind(roomId,now()-45000).first<{n:number}>())?.n||0;
-      return json({...await communityState(db(),roomId,who.userId),rooms,room,moments:moments.map(m=>{let credit=null;try{const c=JSON.parse(String(m.imageCredit||'null'));if(c?.image===m.image)credit=c;}catch{}const timing=timings[String(m.id)];return {...m,imageCredit:credit,timestamp:timing?timing.seconds??0:m.timestamp,hasTimestamp:timing?timing.seconds!==null:Number(m.timestamp)>0,timing:timing||null};}),shared,revision:room.revision,catalogRevision:Number(await setting('catalogRevision','0')),uploads:await uploadQuota(),online,mine,hasBoard,used,limit,stats,pending,verified:who.verified,admin:who.admin,canModerate:await canModerate(who,db()),account:who.account?{email:who.account.email,name:who.account.displayName}:null,verification:env.TURNSTILE_SITE_KEY&&env.TURNSTILE_SECRET_KEY?'turnstile':'browser',siteKey:env.TURNSTILE_SITE_KEY&&env.TURNSTILE_SECRET_KEY?env.TURNSTILE_SITE_KEY:null});
+      return json({draftKey:who.userId?await hash("draft:"+who.userId):null,...await communityState(db(),roomId,who.userId),rooms,room,moments:moments.map(m=>{let credit=null;try{const c=JSON.parse(String(m.imageCredit||'null'));if(c?.image===m.image)credit=c;}catch{}const timing=timings[String(m.id)];return {...m,imageCredit:credit,timestamp:timing?timing.seconds??0:m.timestamp,hasTimestamp:timing?timing.seconds!==null:Number(m.timestamp)>0,timing:timing||null};}),shared,revision:room.revision,catalogRevision:Number(await setting('catalogRevision','0')),uploads:await uploadQuota(),online,mine,hasBoard,used,limit,stats,pending,verified:who.verified,admin:who.admin,canModerate:await canModerate(who,db()),account:who.account?{email:who.account.email,name:who.account.displayName}:null,verification:env.TURNSTILE_SITE_KEY&&env.TURNSTILE_SECRET_KEY?'turnstile':'browser',siteKey:env.TURNSTILE_SITE_KEY&&env.TURNSTILE_SECRET_KEY?env.TURNSTILE_SITE_KEY:null});
     }
     if(req.method==='GET'&&path==='admin'){
       if(!who.admin)throw new ApiError('Admin sign-in required.',403);
@@ -195,12 +195,20 @@ async function handle(req:Request){
     if(path==='vote'){
       const roomId=str(b.roomId,100,true);const room=await db().prepare('SELECT status FROM rooms WHERE id=?').bind(roomId).first();
       if(!room)throw new ApiError('Room not found.',404);
-      if(!Array.isArray(b.votes)||b.votes.length>300)throw new ApiError('Invalid board.');
+      const patch=b.changes!==undefined,input=patch?b.changes:b.votes;
+      if(!Array.isArray(input)||input.length>300)throw new ApiError('Invalid board.');
       const approved=(await db().prepare("SELECT id FROM moments WHERE roomId=? AND status='approved'").bind(roomId).all()).results.map(m=>m.id);
-      const rows=b.votes.map((v:{itemId:unknown;tier:unknown;score:unknown})=>{const id=str(v.itemId,100,true),tier=str(v.tier,1,true),score=Number(v.score);if(!approved.includes(id)||!TIERS.some(t=>t.id===tier)||!Number.isInteger(score)||score<0||score>100)throw new ApiError('Invalid vote.');return {id,tier,score};});
+      const rows=input.map((v:{itemId:unknown;tier:unknown;score:unknown})=>{const id=str(v.itemId,100,true),tier=str(v.tier,1,true),score=Number(v.score);if(!approved.includes(id)||!(patch&&tier==='U')&&!TIERS.some(t=>t.id===tier)||!Number.isInteger(score)||score<0||score>100)throw new ApiError('Invalid vote.');return {id,tier,score};});
       if(new Set(rows.map((r:{id:string})=>r.id)).size!==rows.length)throw new ApiError('Duplicate moments.');
-      await db().batch([db().prepare('DELETE FROM votes WHERE userId=? AND itemId IN (SELECT id FROM moments WHERE roomId=?)').bind(who.userId,roomId),db().prepare('INSERT INTO boards (userId,roomId,updatedAt,autoPublish,byline,version) VALUES (?,?,?,1,?,1) ON CONFLICT(userId,roomId) DO UPDATE SET updatedAt=excluded.updatedAt,version=boards.version+1').bind(who.userId,roomId,now(),'Viewer '+who.userId.slice(-4)),...rows.map((v:{id:string;tier:string;score:number})=>db().prepare('INSERT INTO votes (userId,itemId,tier,score,updatedAt) VALUES (?,?,?,?,?)').bind(who.userId,v.id,v.tier,v.score,now()))]);
-      await touch(roomId);return json({ok:true,saved:rows.length});
+      await rate('vote:'+who.userId,90);
+      await db().batch([
+        ...(!patch?[db().prepare('DELETE FROM votes WHERE userId=? AND itemId IN (SELECT id FROM moments WHERE roomId=?)').bind(who.userId,roomId)]:[]),
+        db().prepare('INSERT INTO boards (userId,roomId,updatedAt,autoPublish,byline,version) VALUES (?,?,?,1,?,1) ON CONFLICT(userId,roomId) DO UPDATE SET updatedAt=excluded.updatedAt,version=boards.version+1').bind(who.userId,roomId,now(),'Viewer '+who.userId.slice(-4)),
+        ...rows.map((v:{id:string;tier:string;score:number})=>v.tier==='U'?db().prepare('DELETE FROM votes WHERE userId=? AND itemId=?').bind(who.userId,v.id):db().prepare('INSERT INTO votes (userId,itemId,tier,score,updatedAt) VALUES (?,?,?,?,?) ON CONFLICT(userId,itemId) DO UPDATE SET tier=excluded.tier,score=excluded.score,updatedAt=excluded.updatedAt').bind(who.userId,v.id,v.tier,v.score,now())),
+        db().prepare('UPDATE rooms SET revision=revision+1 WHERE id=?').bind(roomId)
+      ]);
+      const mine=(await db().prepare("SELECT v.itemId,v.tier,v.score FROM votes v JOIN moments m ON m.id=v.itemId WHERE v.userId=? AND m.roomId=? AND m.status='approved'").bind(who.userId,roomId).all()).results;
+      return json({ok:true,saved:rows.length,mine});
     }
     if(path==='moments'){
       const roomId=str(b.roomId,100,true),{title,description,category,timestamp}=momentFields(b);

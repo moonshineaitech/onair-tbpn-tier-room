@@ -1,0 +1,35 @@
+import assert from 'node:assert/strict';
+import {createHash,randomInt} from 'node:crypto';
+import {readFileSync} from 'node:fs';
+import {resolve,dirname} from 'node:path';
+import ts from 'typescript';
+const cache=new Map();function moduleUrl(file){file=resolve(file);if(cache.has(file))return cache.get(file);let js=ts.transpileModule(readFileSync(file,'utf8'),{compilerOptions:{module:ts.ModuleKind.ESNext,target:ts.ScriptTarget.ES2022}}).outputText;js=js.replace(/from\s+(['"])(\.[^'"]+)\1/g,(_,q,p)=>'from '+q+moduleUrl(resolve(dirname(file),p+'.ts'))+q);const url='data:text/javascript;base64,'+Buffer.from(js).toString('base64');cache.set(file,url);return url;}
+const {readPersonalDraft,mergePersonalVotes,acknowledgeDraft,draftStorageKey}=await import(moduleUrl('lib/personal-draft.ts'));
+let checks=0;const check=(condition,label)=>{assert.ok(condition,label);checks++;console.log('PASS '+label);};
+const first={itemId:'a',tier:'S',score:100,changeId:'first'},next={...first,tier:'F',score:0,changeId:'next'},time=Date.now(),draft=(changes,updatedAt=time)=>JSON.stringify({version:1,updatedAt,changes});
+check(readPersonalDraft(draft([first]))[0].tier==='S','unsent personal edits survive serialization and reload');
+check(!readPersonalDraft(draft([first],time-8*86400000)).length&&!readPersonalDraft('{broken').length,'expired or corrupt drafts are ignored safely');
+check(!readPersonalDraft(draft([{...first,score:-1}])).length&&!readPersonalDraft(draft([{...first,tier:'Z'}])).length,'local storage cannot inject invalid tiers or scores');
+check(draftStorageKey('a','room')!==draftStorageKey('b','room')&&draftStorageKey('a','room')!==draftStorageKey('a','other'),'drafts are scoped to the current identity and episode');
+check(acknowledgeDraft([next],[first]).length===1&&!acknowledgeDraft([first],[first]).length,'an old acknowledgement cannot discard a newer edit');
+check(mergePersonalVotes([{itemId:'b',tier:'A',score:80}],[first]).length===2,'unsent edits overlay fresh remote votes without dropping unrelated changes');
+check(!mergePersonalVotes([first],[{...first,tier:'U'}]).length,'moving back to Unranked removes a rating, including a zero score');
+const base='http://127.0.0.1:5173',network=randomInt(20,240);let cookie='';
+async function call(path,body,admin=false){const r=await fetch(base+'/api/'+path,{method:body===undefined?'GET':'POST',headers:{'cf-connecting-ip':`127.64.${network}.1`,cookie:admin?'__sites_local_auth=1':cookie,...(body===undefined?{}:{origin:base,'Content-Type':'application/json'})},...(body===undefined?{}:{body:JSON.stringify(body)})});return {status:r.status,data:await r.json(),cookie:r.headers.get('set-cookie')};}
+const c=await call('challenge');let nonce=0;while(!createHash('sha256').update(c.data.id+':'+nonce).digest('hex').startsWith('0000'))nonce++;const verified=await call('verify',{id:c.data.id,nonce:String(nonce)});cookie=verified.cookie.split(';')[0];
+const created=await call('admin',{action:'room',title:'Draft recovery QA',description:'Disposable local verification',video:''},true),roomId=created.data.roomId;assert.ok(roomId);
+const ids=[];for(const title of ['First segment','Second segment'])ids.push((await call('moments',{roomId,title,description:'QA',category:'Moment'},true)).data.id);
+const write=changes=>call('vote',{roomId,changes});
+const [a,b]=await Promise.all([write([{itemId:ids[0],tier:'S',score:100}]),write([{itemId:ids[1],tier:'F',score:0}])]);
+check(a.status===200&&b.status===200,'concurrent per-moment saves succeed');
+let state=(await call('state?room='+roomId)).data;
+check(state.mine.length===2&&state.mine.find(v=>v.itemId===ids[1]).score===0,'both independent tab edits persist in D1');
+check(/^[a-f0-9]{64}$/.test(state.draftKey)&&!state.draftKey.includes('visitor'),'the recovery namespace is opaque and returned only for the current visitor');
+await write([{itemId:ids[0],tier:'A',score:80}]);await write([{itemId:ids[0],tier:'A',score:80}]);state=(await call('state?room='+roomId)).data;
+check(state.mine.length===2&&state.distribution.every(d=>d.total===1),'retries remain idempotent and do not inflate the community sample');
+await write([{itemId:ids[0],tier:'U',score:50}]);state=(await call('state?room='+roomId)).data;
+check(state.mine.length===1&&state.mine[0].itemId===ids[1],'unranking one moment preserves other saved ratings');
+check((await write([{itemId:'missing',tier:'S',score:100}])).status===400,'patches reject moments outside the approved catalog');
+check((await write([{itemId:ids[1],tier:'S',score:100},{itemId:ids[1],tier:'F',score:0}])).status===400,'duplicate edits are rejected atomically');
+check((await call('state?room='+roomId)).data.shared.every(v=>v.tier==='U'),'personal recovery never changes the shared live board');
+console.log(`${checks} personal recovery checks passed.`);

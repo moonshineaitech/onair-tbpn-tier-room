@@ -8,7 +8,7 @@ async function client(ip,admin=false){let cookie=admin?'__sites_local_auth=1':''
 async function subscribe(room){const abort=new AbortController(),r=await fetch(base+'/api/events?room='+room,{signal:abort.signal}),reader=r.body.getReader(),decoder=new TextDecoder();let pending='';return {async next(predicate){const end=Date.now()+6500;while(Date.now()<end){let cut;while((cut=pending.indexOf('\n\n'))>=0){const block=pending.slice(0,cut);pending=pending.slice(cut+2);const json=block.match(/data: (.+)/)?.[1];if(json){const data=JSON.parse(json);if(predicate(data))return data;}}const item=await reader.read();if(item.done)break;pending+=decoder.decode(item.value);}throw new Error('No live event arrived.');},async close(){abort.abort();await reader.cancel().catch(()=>{});}};}
 const owner=await client('127.6.0.1',true),viewer=await client('127.6.0.2');
 let state=(await owner('state')).data;
-check(state.admin&&state.room.id==='tbpn-live'&&state.room.videoId==='channel:UC-DRzaGnL_vtBUpCFH5M0tg','official TBPN live channel is the default room');
+check(state.admin&&state.rooms.some(r=>r.id==='tbpn-live'&&r.videoId==='channel:UC-DRzaGnL_vtBUpCFH5M0tg')&&(state.room.id==='tbpn-live'||state.episode?.roomId===state.room.id),'default room is the latest detected episode or the official TBPN channel fallback');
 const catalog=await subscribe('tbpn-live'),before=await catalog.next(()=>true);
 const created=await owner('admin',{action:'room',title:'Admin live QA',description:'Local only',video:'https://www.youtube.com/@tbpnlive/live'});const roomId=created.data.roomId;
 check(created.status===200,'admin can add ranking tabs');
