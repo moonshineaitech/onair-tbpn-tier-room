@@ -1,3 +1,4 @@
+import {collectShowNewsletter} from './show-import';
 import type {Broadcast} from './tbpn-stream';
 import {currentBroadcast} from './tbpn-stream';
 
@@ -57,4 +58,4 @@ export async function syncEpisodes(database:D1Database,broadcast:Broadcast,time=
  await database.prepare("INSERT INTO settings (key,value) VALUES ('episodeLastCheck',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value WHERE CAST(value AS INTEGER)<CAST(excluded.value AS INTEGER)").bind(String(broadcast.checkedAt)).run();
  return {stale:false,created,ended};
 }
-export async function checkEpisodes(database:D1Database){const broadcast=await currentBroadcast(database);return {broadcast,...await syncEpisodes(database,broadcast)};}
+export async function checkEpisodes(database:D1Database,bucket?:R2Bucket){const deadline=Date.now()+17000,broadcast=await currentBroadcast(database),episodes=await syncEpisodes(database,broadcast);const newsletter=await collectShowNewsletter(database,bucket,broadcast,deadline);return {broadcast,...episodes,newsletter};}

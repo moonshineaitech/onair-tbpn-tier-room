@@ -7,7 +7,7 @@ export const TIERS = [
   {id:'D',label:'On mute',value:20,color:'#bfff7f'},
   {id:'F',label:'Never again',value:0,color:'#7fff7f'},
 ];
-export type Moment = {id:string;roomId:string;title:string;description:string;category:string;timestamp:number;image:string|null;status:string;createdAt:number;version?:number;score?:number;count?:number;tier?:string;sample?:boolean};
+export type Moment = {imageCredit?:{url:string;label:string;kind:string}|null;id:string;roomId:string;title:string;description:string;category:string;timestamp:number;image:string|null;status:string;createdAt:number;version?:number;score?:number;count?:number;tier?:string;sample?:boolean};
 export type Room = {id:string;title:string;description:string;videoId:string|null;status:string;createdAt:number;revision?:number};
 export type Placement={itemId:string;tier:string;score:number;position:number;version:number;updatedAt:number};
 export type Vote={itemId:string;tier:string;score:number};

@@ -2,6 +2,7 @@ import { env } from 'cloudflare:workers';
 import { getChatGPTUser } from '@/app/chatgpt-auth';
 import { SAMPLE_ROOM, SAMPLE_MOMENTS, TBPN_LIVE, TBPN_CHANNEL, CATEGORIES, TIERS, initialPlacement, type Moment, type Placement } from '@/lib/room-data';
 import {decodeUpload} from '@/lib/upload';
+import {assertAllowedText,defaultWords} from '@/lib/moderation';
 import {currentBroadcast} from '@/lib/tbpn-stream';
 import {roomServices,canModerate,ServiceError} from '@/lib/room-services';
 import {communityServices,communityState} from '@/lib/community-services';
@@ -39,13 +40,7 @@ async function seed(){
   ]);
 }
 async function setting(key:string,fallback:string){return (await db().prepare('SELECT value FROM settings WHERE key=?').bind(key).first<{value:string}>())?.value??fallback;}
-const defaultWords=['fuck','shit','bitch','cunt','asshole','nigger','faggot','kike','retard','porn','rape','kill yourself'];
-function normalize(s:string){return s.normalize('NFKD').replace(/[\u0300-\u036f\u200b-\u200d\ufeff]/g,'').toLowerCase().replace(/[@4]/g,'a').replace(/[13!]/g,m=>m==='3'?'e':m==='1'?'i':'i').replace(/0/g,'o').replace(/\$/g,'s');}
-async function checkText(text:string){
-  const words=JSON.parse(await setting('blockedWords',JSON.stringify(defaultWords))) as string[];
-  const clean=normalize(text);
-  if(words.some(w=>{const letters=normalize(w).replace(/[^a-z0-9]/g,'');if(!letters)return false;const pattern=letters.split('').join('[^a-z0-9]*');return new RegExp('(?:^|[^a-z0-9])'+pattern+'(?:$|[^a-z0-9])').test(clean);}))throw new ApiError('Please rephrase this. It contains a word blocked by this room.');
-}
+async function checkText(text:string){try{await assertAllowedText(db(),text);}catch(e){throw new ApiError((e as Error).message);}}
 function str(v:unknown,max:number,required=false){if(typeof v!=='string'||v.length>max||(required&&!v.trim()))throw new ApiError('Please check the required fields and character limits.');return v.trim();}
 function youtube(v:unknown){const s=str(v,300);if(!s)return null;if(s==='tbpn-live'||s==='channel:'+TBPN_CHANNEL)return 'channel:'+TBPN_CHANNEL;if(/^[\w-]{11}$/.test(s))return s;try{const u=new URL(s);if(['youtube.com','www.youtube.com','m.youtube.com','youtu.be'].includes(u.hostname)){if(u.pathname.toLowerCase().replace(/\/$/,'')==='/@tbpnlive/live'||u.pathname.toLowerCase().replace(/\/$/,'')==='/@tbpnlive')return 'channel:'+TBPN_CHANNEL;const id=u.hostname==='youtu.be'?u.pathname.slice(1).split('/')[0]:u.searchParams.get('v')||u.pathname.match(/\/(?:live|embed|shorts)\/([\w-]{11})/)?.[1];if(id&&/^[\w-]{11}$/.test(id))return id;}}catch{}throw new ApiError('Add a valid YouTube video or livestream URL.');}
 async function log(actor:string,action:string,detail:string){await db().prepare('INSERT INTO audit (id,actor,action,detail,createdAt) VALUES (?,?,?,?,?)').bind(identifier(),actor,action,detail,now()).run();}
@@ -100,18 +95,18 @@ async function handle(req:Request){
       return new Response(object.body,{headers:{'Content-Type':object.httpMetadata?.contentType||'image/jpeg','Cache-Control':'private, max-age=300','X-Content-Type-Options':'nosniff'}});
     }
     await seed();
-    if(req.method==='GET'&&(path==='stream'||path==='lifecycle')){const result=await checkEpisodes(db());return json(path==='stream'?result.broadcast:{ok:true,checkedAt:result.broadcast.checkedAt,stale:result.stale,created:result.created,ended:result.ended});}
+    if(req.method==='GET'&&(path==='stream'||path==='lifecycle')){const result=await checkEpisodes(db(),env.BUCKET);return json(path==='stream'?result.broadcast:{ok:true,checkedAt:result.broadcast.checkedAt,stale:result.stale,created:result.created,ended:result.ended,newsletter:result.newsletter});}
     if(req.method==='GET'&&path==='events')return await stream(req,url.searchParams.get('room')||SAMPLE_ROOM.id);
     const who=await identity(req);
     const community=req.method==='GET'?await communityServices(req,url,path,undefined,who,db(),{checkText,rate,log}):null;if(community)return community;
     const extra=req.method==='GET'?await roomServices(req,url,path,undefined,who,db(),{checkText,rate,log}):null;if(extra)return extra;
     if(req.method==='GET'&&path==='state'){
-      if(!url.searchParams.get('room'))await checkEpisodes(db());
+      if(!url.searchParams.get('room'))await checkEpisodes(db(),env.BUCKET);
       const rooms=(await db().prepare('SELECT * FROM rooms ORDER BY createdAt DESC LIMIT 100').all()).results;
       const latestEpisode=await db().prepare('SELECT roomId FROM episodes ORDER BY startedAt DESC LIMIT 1').first<{roomId:string}>();
       const roomId=url.searchParams.get('room')||latestEpisode?.roomId||TBPN_LIVE.id;
       const room=rooms.find(r=>r.id===roomId);if(!room)throw new ApiError('Room not found.',404);
-      const moments=(await db().prepare(`SELECT m.id,m.roomId,m.title,m.description,m.category,m.timestamp,m.image,m.status,m.createdAt,m.version,AVG(v.score) score,COUNT(v.itemId) count FROM moments m LEFT JOIN votes v ON v.itemId=m.id WHERE m.roomId=? AND m.status='approved' GROUP BY m.id ORDER BY m.createdAt ASC,m.id ASC LIMIT 300`).bind(roomId).all()).results;
+      const moments=(await db().prepare(`SELECT m.id,m.roomId,m.title,m.description,m.category,m.timestamp,m.image,m.status,m.createdAt,m.version,AVG(v.score) score,COUNT(v.itemId) count,(SELECT value FROM settings WHERE key='imageCredit:'||m.id) imageCredit FROM moments m LEFT JOIN votes v ON v.itemId=m.id WHERE m.roomId=? AND m.status='approved' GROUP BY m.id ORDER BY m.createdAt ASC,m.id ASC LIMIT 300`).bind(roomId).all()).results;
       const mine=who.userId?(await db().prepare("SELECT v.itemId,v.tier,v.score FROM votes v JOIN moments m ON m.id=v.itemId WHERE v.userId=? AND m.roomId=? AND m.status='approved'").bind(who.userId,roomId).all()).results:[];
       const hasBoard=who.userId?!!await db().prepare('SELECT userId FROM boards WHERE userId=? AND roomId=?').bind(who.userId,roomId).first():false;
       const used=(await db().prepare('SELECT COUNT(*) n FROM moments WHERE roomId=? AND (createdBy=? OR ipHash=?)').bind(roomId,who.userId||'',who.ipHash).first<{n:number}>())?.n||0;
@@ -120,7 +115,7 @@ async function handle(req:Request){
       const pending=who.userId?(await db().prepare("SELECT id,title,status FROM moments WHERE createdBy=? AND roomId=? AND status!='approved' ORDER BY createdAt DESC").bind(who.userId,roomId).all()).results:[];
       const shared=await sharedBoard(roomId);
       const online=(await db().prepare('SELECT COUNT(*) n FROM presence WHERE roomId=? AND seenAt>?').bind(roomId,now()-45000).first<{n:number}>())?.n||0;
-      return json({...await communityState(db(),roomId,who.userId),rooms,room,moments,shared,revision:room.revision,catalogRevision:Number(await setting('catalogRevision','0')),uploads:await uploadQuota(),online,mine,hasBoard,used,limit,stats,pending,verified:who.verified,admin:who.admin,canModerate:await canModerate(who,db()),account:who.account?{email:who.account.email,name:who.account.displayName}:null,verification:env.TURNSTILE_SITE_KEY&&env.TURNSTILE_SECRET_KEY?'turnstile':'browser',siteKey:env.TURNSTILE_SITE_KEY&&env.TURNSTILE_SECRET_KEY?env.TURNSTILE_SITE_KEY:null});
+      return json({...await communityState(db(),roomId,who.userId),rooms,room,moments:moments.map(m=>{let credit=null;try{const c=JSON.parse(String(m.imageCredit||'null'));if(c?.image===m.image)credit=c;}catch{}return {...m,imageCredit:credit};}),shared,revision:room.revision,catalogRevision:Number(await setting('catalogRevision','0')),uploads:await uploadQuota(),online,mine,hasBoard,used,limit,stats,pending,verified:who.verified,admin:who.admin,canModerate:await canModerate(who,db()),account:who.account?{email:who.account.email,name:who.account.displayName}:null,verification:env.TURNSTILE_SITE_KEY&&env.TURNSTILE_SECRET_KEY?'turnstile':'browser',siteKey:env.TURNSTILE_SITE_KEY&&env.TURNSTILE_SECRET_KEY?env.TURNSTILE_SITE_KEY:null});
     }
     if(req.method==='GET'&&path==='admin'){
       if(!who.admin)throw new ApiError('Admin sign-in required.',403);

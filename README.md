@@ -103,3 +103,8 @@ Live broadcasts open at the live edge rather than requesting a zero-second DVR o
 ## Image cards and Unranked tray
 
 The Unranked catalog wraps into a responsive grid with a visible available count and independent vertical scrolling. All six ranking tiers stay on screen. A 1280 by 720 browser shows the twenty-card catalog at once; a 480 by 844 viewport shows ten cards before scrolling. The tray supports mouse dragging, keyboard scrolling, and a separate touch drag grip so swiping the cards can scroll the catalog. Source and license credits for the episode images are recorded in each moment’s context and in docs/episode-image-credits.md. Uploaded image records remain editable through Admin.
+
+
+## Automatic newsletter and image import
+
+New confirmed livestreams now start a durable per-episode newsletter import through the existing unattended collector. The issue is matched to the exact YouTube video, safe topics go to Unranked, and relevant source images are stored progressively under the shared daily image limit. Admin edits and hidden items are protected. Newsletter now includes sync status, per-show pause/resume, and Check now controls alongside the manual backup. See [the import operations and verification guide](docs/automatic-show-import.md).

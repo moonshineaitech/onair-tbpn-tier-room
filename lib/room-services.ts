@@ -1,3 +1,4 @@
+import {showImportStatus,controlShowImport} from './show-import';
 import {CATEGORIES} from './room-data';
 import {parseNewsletterFeed} from './newsletter';
 export class ServiceError extends Error{constructor(message:string,public status=400){super(message);}}
@@ -22,6 +23,11 @@ export async function roomServices(req:Request,url:URL,path:string,b:any,who:Vis
    if(!who.admin)throw new ServiceError('Admin access required.',403);
    const mutes=(await database.prepare('SELECT id,roomId,author,until,reason FROM chat_mutes WHERE until>? ORDER BY until DESC LIMIT 100').bind(time).all()).results;
    return reply({mutes,moderators:await config(database,'chatModerators')});
+ }
+ if(req.method==='GET'&&path==='newsletter/automation'){
+   if(!who.admin)throw new ServiceError('Admin access required.',403);
+   const roomId=field(url.searchParams.get('room'),100,true);
+   return reply(await showImportStatus(database,roomId));
  }
  if(req.method==='GET'&&path==='newsletter'){
    if(!who.admin)throw new ServiceError('Admin access required.',403);
@@ -78,6 +84,15 @@ export async function roomServices(req:Request,url:URL,path:string,b:any,who:Vis
      if(mute)await database.batch([database.prepare('DELETE FROM chat_mutes WHERE id=?').bind(b.id),chatTouch(database,mute.roomId)]);
    }else throw new ServiceError('Unknown moderation action.');
    await deps.log(who.account!.email,'chat:'+b.action,'Chat settings updated');return reply({ok:true});
+ }
+ if(path==='newsletter/automation'){
+   if(!who.admin)throw new ServiceError('Admin access required.',403);
+   const roomId=field(b.roomId,100,true);
+   if(!await database.prepare('SELECT roomId FROM episodes WHERE roomId=?').bind(roomId).first())throw new ServiceError('Automatic sync is available on episode boards.');
+   await deps.rate('newsletter-control:'+who.userId,10);
+   try{await controlShowImport(database,roomId,field(b.action,20,true));}catch(e){throw new ServiceError((e as Error).message);}
+   await deps.log(who.account!.email,'newsletter:'+b.action,roomId);
+   return reply(await showImportStatus(database,roomId));
  }
  if(path==='newsletter/import'){
    if(!who.admin)throw new ServiceError('Admin access required.',403);
