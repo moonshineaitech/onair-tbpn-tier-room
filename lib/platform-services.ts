@@ -2,11 +2,21 @@ import {ServiceError,type Visitor} from './room-services';
 import {managesRoom} from './room-permissions';
 import {parseStreamSource} from './stream-source';
 import {resolveStreamSource} from './stream-resolution';
+import {cachedStreamMetadata,refreshDirectoryMetadata} from './stream-metadata';
 type Deps={checkText:(text:string,roomId?:string)=>Promise<void>;rate:(key:string,limit:number,windowMs?:number)=>Promise<void>;log:(actor:string,action:string,detail:string)=>Promise<void>};
 const reply=(data:unknown,status=200)=>Response.json(data,{status,headers:{'Cache-Control':'no-store'}});
 function text(value:unknown,max:number,required=false){if(typeof value!=='string'||value.length>max||required&&!value.trim())throw new ServiceError('Check the required fields and text limits.');return value.trim();}
 export async function platformServices(req:Request,url:URL,path:string,b:any,who:Visitor,db:D1Database,deps:Deps){
- if(!['rooms/create','rooms/manage'].includes(path))return null;
+ if(!['rooms/create','rooms/manage','streams/metadata','rooms/refresh'].includes(path))return null;
+ if(path==='streams/metadata'&&req.method==='GET'){
+  const input=text(url.searchParams.get('url')||'',1500,true);try{parseStreamSource(input);}catch(e){throw new ServiceError((e as Error).message);}
+  await deps.rate('stream-lookup:'+who.ipHash,40,60000);const source=await resolveStreamSource(input);
+  return reply(source?await cachedStreamMetadata(db,source):null);
+ }
+ if(path==='rooms/refresh'&&req.method==='GET'){
+  await deps.rate('directory-refresh:'+who.ipHash,30,60000);const id=text(url.searchParams.get('room')||'',100);
+  if(id){const room=await db.prepare('SELECT videoId FROM rooms WHERE id=?').bind(id).first<{videoId:string|null}>();if(room?.videoId)await cachedStreamMetadata(db,room.videoId);}else await refreshDirectoryMetadata(db);return reply({ok:true});
+ }
  if(path==='rooms/manage'){
   const roomId=text(req.method==='GET'?url.searchParams.get('room'):b.roomId,100,true);if(!await managesRoom(who,db,roomId))throw new ServiceError('Host access required for this room.',403);
   if(req.method==='GET'){
@@ -28,6 +38,7 @@ export async function platformServices(req:Request,url:URL,path:string,b:any,who
  try{parseStreamSource(video);}catch(e){throw new ServiceError((e as Error).message);}
  if(!who.admin){await deps.rate('create-room:'+who.userId,3,86400000);await deps.rate('create-room-network:'+who.ipHash,5,86400000);}
  let source:string|null;try{source=await resolveStreamSource(video);}catch(e){throw new ServiceError((e as Error).message);}
+ if(source)await cachedStreamMetadata(db,source);
  const id=crypto.randomUUID(),time=Date.now(),rows=await db.batch([
   db.prepare("INSERT INTO rooms (id,title,description,videoId,status,createdAt,revision) SELECT ?,?,?,?,'open',?,1 WHERE (SELECT COUNT(*) FROM room_hosts)<1000 RETURNING id").bind(id,title,description,source,time),
   db.prepare('INSERT INTO room_hosts (roomId,ownerId,createdAt) SELECT ?,?,? WHERE EXISTS (SELECT 1 FROM rooms WHERE id=?)').bind(id,who.userId,time,id),

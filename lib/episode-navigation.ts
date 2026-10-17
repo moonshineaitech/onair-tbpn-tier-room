@@ -1,7 +1,13 @@
 import type {Room} from './room-data';
-export const isVerifiedLive=(room:Room,time=Date.now())=>room.episodePhase==='live'&&Number.isFinite(room.episodeLastLiveAt)&&Number(room.episodeLastLiveAt)>=time-300000;
+export const isVerifiedLive=(room:Room,time=Date.now())=>Number(room.streamCheckedAt||0)>Number(room.episodeLastLiveAt||0)?room.streamLiveStatus==='live'&&Number(room.streamStatusCheckedAt||0)>=time-180000:room.episodePhase==='live'&&Number.isFinite(room.episodeLastLiveAt)&&Number(room.episodeLastLiveAt)>=time-180000;
 export function episodeLabel(room:Room,time=Date.now()){
  if(room.id==='the-warm-up')return 'Practice · sample moments';
+ if(isVerifiedLive(room,time))return room.status==='closed'?'Live show · ranking closed':'Live show · rank now';
+ if(Number(room.streamCheckedAt||0)>Number(room.episodeLastLiveAt||0)){
+  if(room.streamLiveStatus==='replay')return room.status==='closed'?'Replay · shared board closed':'Replay · open for ranking';
+  if(room.streamLiveStatus==='upcoming')return 'Upcoming stream · build your board';
+  if(room.streamLiveStatus==='offline')return room.status==='closed'?'Stream offline · ranking closed':'Stream offline · board open';
+ }
  if(room.episodePhase==='live'&&!isVerifiedLive(room,time))return 'Live status pending';
  if(room.episodePhase==='live')return room.status==='closed'?'Live show · ranking closed':'Live show · rank now';
  if(room.episodePhase==='ended')return room.status==='closed'?'Replay · shared board closed':'Replay · open for ranking';

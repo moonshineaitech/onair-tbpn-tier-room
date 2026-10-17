@@ -1,6 +1,7 @@
 import {platformServices} from '@/lib/platform-services';
 import {managesRoom} from '@/lib/room-permissions';
 import {resolveStreamSource} from '@/lib/stream-resolution';
+import {cachedStreamMetadata} from '@/lib/stream-metadata';
 import {findRoom,recentRooms,latestEpisodeRoom,searchRooms} from '@/lib/episode-directory';
 import {timingState} from '@/lib/moment-timing';
 import {timingServices} from '@/lib/timing-services';
@@ -49,7 +50,7 @@ async function seed(){
 async function setting(key:string,fallback:string){return (await db().prepare('SELECT value FROM settings WHERE key=?').bind(key).first<{value:string}>())?.value??fallback;}
 async function checkText(text:string,roomId?:string){try{await assertAllowedText(db(),text,roomId);}catch(e){throw new ApiError((e as Error).message);}}
 function str(v:unknown,max:number,required=false){if(typeof v!=='string'||v.length>max||(required&&!v.trim()))throw new ApiError('Please check the required fields and character limits.');return v.trim();}
-async function source(v:unknown){try{return await resolveStreamSource(str(v,1500));}catch(e){throw new ApiError((e as Error).message);}}
+async function source(v:unknown){try{const value=await resolveStreamSource(str(v,1500));if(value)await cachedStreamMetadata(db(),value);return value;}catch(e){throw new ApiError((e as Error).message);}}
 async function log(actor:string,action:string,detail:string){await db().prepare('INSERT INTO audit (id,actor,action,detail,createdAt) VALUES (?,?,?,?,?)').bind(identifier(),actor,action,detail,now()).run();}
 async function sharedBoard(roomId:string){
   const items=(await db().prepare("SELECT id FROM moments WHERE roomId=? AND status='approved' ORDER BY createdAt,id").bind(roomId).all<{id:string}>()).results;

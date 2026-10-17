@@ -1,0 +1,60 @@
+import assert from 'node:assert/strict';
+import {DatabaseSync} from 'node:sqlite';
+import {readFileSync,readdirSync} from 'node:fs';
+import {resolve,dirname} from 'node:path';
+import ts from 'typescript';
+const modules=new Map();function moduleUrl(file){file=resolve(file);if(modules.has(file))return modules.get(file);let js=ts.transpileModule(readFileSync(file,'utf8'),{compilerOptions:{module:ts.ModuleKind.ESNext,target:ts.ScriptTarget.ES2022}}).outputText;js=js.replace(/from\s+(['"])(\.[^'"]+)\1/g,(_,q,p)=>'from '+q+moduleUrl(resolve(dirname(file),p+'.ts'))+q);const url='data:text/javascript;base64,'+Buffer.from(js).toString('base64');modules.set(file,url);return url;}
+const {youtubeMetadata,twitchMetadata,fetchStreamMetadata,cachedStreamMetadata,refreshDirectoryMetadata}=await import(moduleUrl('lib/stream-metadata.ts'));
+const {searchRooms,findRoom}=await import(moduleUrl('lib/episode-directory.ts'));
+const {isVerifiedLive}=await import(moduleUrl('lib/episode-navigation.ts'));
+let checks=0;function check(value,label){assert.ok(value,label);checks++;console.log('PASS '+label);}
+const id='M7lc1UVf-VE',channel='UC_x5XG1OV2P6uZZ5FSM9Ttw';
+function player({live={isLiveNow:true,startTimestamp:'2026-10-17T10:00:00Z'},status='OK',videoId=id,isUpcoming=false,isLiveContent=true}={}){return '<script>var ytInitialPlayerResponse = '+JSON.stringify({videoDetails:{videoId,channelId:channel,title:'A real stream & its moments',isLiveContent,isUpcoming,thumbnail:{thumbnails:[{url:'https://i.ytimg.com/vi/'+id+'/hqdefault.jpg'}]}},playabilityStatus:{status},microformat:{playerMicroformatRenderer:{liveBroadcastDetails:live}}})+';</script>';}
+check(youtubeMetadata(player(),id).playbackId===id&&youtubeMetadata(player(),id).liveStatus==='live','current YouTube live signal is recognized');
+check(youtubeMetadata(player({live:{isLiveNow:false,endTimestamp:'2026-10-17T11:00:00Z'}}),id).liveStatus==='replay','ended broadcasts are replay even though historically live');
+check(youtubeMetadata(player({live:{isLiveNow:true,endTimestamp:'2026-10-17T11:00:00Z'}}),id).liveStatus==='replay','an end timestamp wins over conflicting live flags');
+check(youtubeMetadata(player({status:'LIVE_STREAM_OFFLINE',isUpcoming:true}),id).liveStatus==='upcoming','scheduled shows never count as live');
+check(youtubeMetadata(player({status:'ERROR'}),id).liveStatus==='unknown','unplayable video status is unknown');
+check(youtubeMetadata(player({live:undefined}),id).title==='A real stream & its moments','provider title survives JSON punctuation');
+check(youtubeMetadata(player({videoId:'wrongvideo1'}),id).title===null,'unrelated video metadata is rejected');
+check(youtubeMetadata(player(),'channel:'+channel).liveStatus==='live','a channel live URL can return its active broadcast');
+check(youtubeMetadata(player(),'channel:UC0000000000000000000000').liveStatus==='unknown','channel metadata must match the requested channel');
+check(youtubeMetadata('<meta content="A &amp; B &#39;show&#39;" property="og:title"><meta content="https://evil.example/a.png" property="og:image">',id).title==="A & B 'show'"&&!youtubeMetadata('<meta property="og:image" content="https://evil.example/a.png">',id).thumbnail,'OG attributes decode safely and reject arbitrary thumbnail hosts');
+check(youtubeMetadata('<meta property="og:title" content="YouTube">',id).title===null,'generic provider error pages do not become room names');
+const modern=player().replace(/"liveBroadcastDetails":\{[^}]+\}/,'"liveBroadcastDetails":null').replace('"status":"OK"','"status":"OK","liveStreamability":{"liveStreamabilityRenderer":{"videoId":"'+id+'","pollDelayMs":"15000"}}');
+check(youtubeMetadata(modern,id).liveStatus==='live','current live-streamability data works when YouTube omits the older microformat');
+const twitch=(data)=>'<script type="application/ld+json">'+JSON.stringify({'@graph':[data]})+'</script>';
+check(twitchMetadata(twitch({'@type':'VideoObject',url:'https://www.twitch.tv/creator',name:'Going live',publication:{'@type':'BroadcastEvent',isLiveBroadcast:true,startDate:'2026-10-17T10:00:00Z'}}),'twitch:creator',Date.parse('2026-10-17T11:00:00Z')).liveStatus==='live','Twitch live labels require a current broadcast event for that channel');
+check(twitchMetadata(twitch({'@type':'VideoObject',url:'https://www.twitch.tv/videos/123',name:'An archive'}),'twitch:creator').liveStatus==='unknown','a channel’s old VOD does not imply current live status');
+check(twitchMetadata(twitch({'@type':'VideoObject',url:'https://www.twitch.tv/videos/123',name:'An archive',thumbnailUrl:'https://static-cdn.jtvnw.net/a.jpg'}),'twitch-video:123').thumbnail==='https://static-cdn.jtvnw.net/a.jpg','Twitch VOD metadata accepts a single thumbnail URL');
+check(twitchMetadata("<meta property='og:title' content='Creator - Twitch'>",'twitch:creator').liveStatus==='unknown','profile pages alone never claim live or offline');
+const sqlite=new DatabaseSync(':memory:');for(const f of readdirSync('drizzle').filter(f=>f.endsWith('.sql')).sort())sqlite.exec(readFileSync('drizzle/'+f,'utf8'));
+function statement(sql,args=[]){return {bind:(...a)=>statement(sql,a),all:async()=>({results:sqlite.prepare(sql).all(...args)}),first:async()=>sqlite.prepare(sql).get(...args)||null,run:async()=>sqlite.prepare(sql).run(...args)};}const db={prepare:sql=>statement(sql)};
+const realFetch=globalThis.fetch;let calls=0;
+try{
+ globalThis.fetch=async url=>{calls++;return new Response(player());};
+ const saved=await cachedStreamMetadata(db,id);check(saved.liveStatus==='live'&&saved.statusCheckedAt>0,'fresh provider metadata persists in shared storage');
+ const again=await cachedStreamMetadata(db,id);check(calls===1&&again.title===saved.title,'cached lookups are shared across viewers');
+ const row=sqlite.prepare('SELECT * FROM stream_metadata WHERE source=?').get(id);check(row.source===id&&row.thumbnail.startsWith('https://i.ytimg.com/'),'metadata is keyed by normalized source');
+ sqlite.prepare('UPDATE stream_metadata SET nextCheckAt=0 WHERE source=?').run(id);globalThis.fetch=async()=>{throw new Error('Provider offline');};
+ const outage=await cachedStreamMetadata(db,id);check(outage.title===saved.title&&outage.thumbnail===saved.thumbnail&&outage.liveStatus==='unknown','outages retain useful title and art but remove unconfirmed live status');
+ calls=0;globalThis.fetch=async()=>{calls++;return new Response(player());};await Promise.all([cachedStreamMetadata(db,'QA123456789'),cachedStreamMetadata(db,'QA123456789')]);check(calls===1,'a per-source database lease deduplicates simultaneous lookups');
+ calls=0;await fetchStreamMetadata('link:https://example.com/stream');await fetchStreamMetadata('file:https://example.com/a.mp4');check(calls===0,'arbitrary watch links and direct media files are never fetched server-side');
+ globalThis.fetch=async()=>{calls++;return new Response(null,{status:302,headers:{location:'https://127.0.0.1/private'}});};calls=0;const redirect=await fetchStreamMetadata(id);check(redirect.liveStatus==='unknown'&&calls===2,'provider redirects to arbitrary hosts are blocked, including the oEmbed fallback');
+ calls=0;globalThis.fetch=async url=>{calls++;if(calls===1)return new Response(null,{status:302,headers:{location:'https://www.youtube.com/watch?v='+id}});return new Response(player());};check((await fetchStreamMetadata('channel:'+channel)).liveStatus==='live'&&calls===2,'safe YouTube live-channel redirects retain provider and channel validation');
+ globalThis.fetch=async()=>new Response('x',{headers:{'content-length':'5000000'}});check((await fetchStreamMetadata(id)).liveStatus==='unknown','oversized provider responses fail safely');
+ const insert=sqlite.prepare("INSERT INTO rooms (id,title,description,videoId,status,createdAt) VALUES (?,?,?,?,'open',?)"),time=Date.now();
+ for(let i=0;i<65;i++)insert.run('room-'+i,'Watch room '+i,'Public details',i===0?id:i===1?'QA123456789':null,time+i);
+ sqlite.prepare("UPDATE stream_metadata SET liveStatus='live',checkedAt=?,statusCheckedAt=?,nextCheckAt=? WHERE source=?").run(time,time,time+60000,id);
+ check((await searchRooms(db,'','all',0,time)).rooms[0].id==='room-0','an older confirmed live room ranks ahead of every newer room');
+ const first=await searchRooms(db,'','all',0,time),next=await searchRooms(db,'','all',30,time);check(!first.rooms.some(r=>next.rooms.some(s=>r.id===s.id)),'live-first sorting remains stable across server-side pagination');
+ check((await searchRooms(db,'','live',0,time)).total===1,'live filtering uses confirmed metadata for non-TBPN rooms');
+ check((await findRoom(db,'room-0')).streamTitle===saved.title,'metadata appears in room state without replacing the host’s room title');
+ check(isVerifiedLive(await findRoom(db,'room-0'),time)&&!isVerifiedLive(await findRoom(db,'room-0'),time+180001),'live badges expire after three minutes without confirmation');
+ check((await searchRooms(db,'','live',0,time+180001)).total===0,'stale live metadata cannot stay pinned in the directory');
+ sqlite.prepare("UPDATE rooms SET videoId=NULL WHERE id='room-0'").run();check(!(await findRoom(db,'room-0')).streamThumbnail,'changing or clearing a source cannot retain another stream’s image');
+ sqlite.prepare("UPDATE rooms SET videoId=? WHERE id='room-0'").run(id);sqlite.prepare('UPDATE stream_metadata SET nextCheckAt=0').run();
+ calls=0;globalThis.fetch=async()=>{calls++;return new Response(player());};await Promise.all([refreshDirectoryMetadata(db),refreshDirectoryMetadata(db)]);check(calls===2,'directory refresh shares a global lease and processes each distinct source once');
+ check((await searchRooms(db,'A real stream')).rooms.some(r=>r.id==='room-0'),'stream titles remain searchable alongside custom room names');
+}finally{globalThis.fetch=realFetch;sqlite.close();}
+console.log(`${checks} stream metadata checks passed.`);

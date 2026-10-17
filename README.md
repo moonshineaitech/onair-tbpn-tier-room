@@ -126,8 +126,19 @@ Insights refreshes through room events, offers timed highlight candidates with a
 
 ## Episode navigation and archive
 
-Plain legacy `?room=tbpn-live` landing links now open the current detected episode. Links to a specific moment or posted board retain their original room. The header distinguishes verified live shows, replays open for ranking, practice boards, and custom boards. Live labels require a source observation within five minutes; stale live phases are marked pending and cannot outrank a newer replay. A latest-episode shortcut appears when browsing an older board and waits for unsent rankings to save.
+Plain legacy `?room=tbpn-live` landing links now open the current detected episode. Links to a specific moment or posted board retain their original room. The header distinguishes verified live shows, replays open for ranking, practice boards, and custom boards. Live labels require a source observation within three minutes; stale live phases are marked pending and cannot outrank a newer replay. A latest-episode shortcut appears when browsing an older board and waits for unsent rankings to save.
 
 All episodes opens a paginated archive that searches show titles, guests, descriptions, and approved moment text, with live/checking, replay and custom-board filters. Its full archive is independent of the compact recent tabs. Direct links remain usable beyond the newest 100-room catalog. Official episodes do not consume the separate 100-custom-board allowance. Watch the show follows the selected episode and keeps the current playhead when that episode is already playing; verified active shows open at the live edge. Room chat is labeled separately from the broadcast status.
 
 `scripts/test-episode-directory.mjs` exercises directory ordering, search, freshness, privacy filters, deep links, and pagination with more than 100 fixture rooms. `scripts/test-archive-api.mjs` tests the real local HTTP-to-D1 path with 105 disposable boards and removes those fixtures afterward.
+
+
+## Automatic stream previews and live discovery
+
+Pasting a supported HTTPS stream link calls the server metadata lookup, previews the provider title and thumbnail, and fills an untouched room name. A typed room name is never replaced by a late response. Hosts can choose Use stream title to accept the detected name. Unsupported, private, or unavailable sources retain manual room setup; other watch links are never fetched server-side.
+
+`stream_metadata` caches provider information by normalized source, with database leases for concurrent lookups and refreshes. YouTube public playback data distinguishes current live broadcasts, upcoming shows, and replays. Twitch public pages supply titles and images when available; a profile or old VOD cannot establish current live status. Vimeo oEmbed supplies public video details. No provider key is required. A provider outage preserves the last title and image while marking its live status unknown. Only HTTPS images from approved provider CDNs are displayed.
+
+The homepage serves saved rooms immediately, then checks up to six due sources in parallel; a shared lease prevents duplicate refresh batches. Visible homepages refresh every thirty seconds, and selected boards refresh their own source every minute. Confirmed live rooms sort first across the complete server-paginated directory, with Live now filtering and a Join & rank action. Live labels expire after three minutes without confirmation. YouTube channels use the detected broadcast ID for playback and platform chat while retaining their channel source. Custom room names, rankings, and source links remain independent from refreshed provider titles. The current implementation refreshes on visitor activity; it does not claim unattended monitoring of arbitrary channels.
+
+`scripts/test-stream-metadata.mjs` exercises provider fixtures, redirects, response limits, freshness, deduplication, outages, source changes, and live-first pagination. The existing platform and directory suites cover host permissions and durable room creation.

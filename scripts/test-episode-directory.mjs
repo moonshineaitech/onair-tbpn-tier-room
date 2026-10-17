@@ -21,7 +21,7 @@ check(first.total===113&&first.rooms.length===30&&second.rooms.length===30,'the 
 check(!first.rooms.some(r=>second.rooms.some(s=>s.id===r.id)),'stable archive pages do not repeat rooms');
 let result=await searchRooms(db,'archive founder');check(result.total===1&&result.rooms[0].id==='episode-0'&&result.rooms[0].momentCount===1,'case-insensitive guest/context search finds old episodes and excludes hidden moments from counts');
 check((await searchRooms(db,'Quiet Moonshot')).rooms[0]?.id==='episode-0'&&(await searchRooms(db,'Hidden')).total===0,'topic search includes approved moment text without revealing moderated content');
-check((await searchRooms(db,'','live')).rooms[0].id==='episode-1'&&(await searchRooms(db,'','replays')).rooms[0].id==='episode-0','live and replay filters use persisted episode state');
+check((await searchRooms(db,'','live',0,1001)).rooms[0].id==='episode-1'&&(await searchRooms(db,'','replays')).rooms[0].id==='episode-0','live and replay filters use persisted episode state');
 check((await searchRooms(db,'','custom')).total===111,'custom boards stay separate from official episode records');
 check((await searchRooms(db,"' OR 1=1 --")).total===0,'search text is bound as data, never interpolated SQL');
 check((await searchRooms(db,'','all',NaN)).offset===0&&(await searchRooms(db,'','all',-50)).offset===0,'invalid pagination offsets normalize safely');

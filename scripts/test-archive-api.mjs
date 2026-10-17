@@ -17,7 +17,7 @@ try{
  const current=(await get('state')).data;
  check(current.room.id===current.latestEpisode?.id&&current.room.episodePhase,'default navigation selects the current episode instead of a newer custom board');
  const replays=(await get('rooms?kind=replays')).data;
- check(replays.rooms.every(r=>r.episodePhase==='ended'),'HTTP replay filters use real persisted episode metadata');
+ check(replays.rooms.every(r=>r.episodePhase==='ended'||r.streamLiveStatus==='replay'),'HTTP replay filters include persisted episodes and other verified video sources');
  const custom=(await get('rooms?q='+prefix+'&kind=custom')).data;
  check(custom.total===105&&custom.rooms.every(r=>!r.episodePhase),'custom boards remain distinguishable from official episodes');
  check((await get('rooms?q='+encodeURIComponent("' OR 1=1 --"))).data.total===0,'HTTP search rejects SQL-injection semantics');

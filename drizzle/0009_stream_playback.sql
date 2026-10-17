@@ -1,0 +1,1 @@
+ALTER TABLE `stream_metadata` ADD `playbackId` text;
