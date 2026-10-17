@@ -10,7 +10,7 @@ export function episodeLabel(room:Room,time=Date.now()){
 }
 export function initialRoomTarget(params:URLSearchParams){
  const room=params.get('room')||'';
- return room==='tbpn-live'&&!params.has('moment')&&!params.has('board')&&params.get('view')!=='mine'?'':room;
+ return room==='tbpn-live'&&!params.has('moment')&&!params.has('board')&&!['mine','compare'].includes(params.get('view')||'')?'':room;
 }
 export function visibleRoomTabs(rooms:Room[],selected:Room){
  const result=rooms.slice(0,8);if(!result.some(r=>r.id===selected.id))result.push(selected);return result;
