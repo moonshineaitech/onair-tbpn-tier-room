@@ -1,3 +1,4 @@
+import {findRoom,recentRooms,latestEpisodeRoom,searchRooms} from '@/lib/episode-directory';
 import {timingState} from '@/lib/moment-timing';
 import {timingServices} from '@/lib/timing-services';
 import { env } from 'cloudflare:workers';
@@ -103,12 +104,13 @@ async function handle(req:Request){
     const community=req.method==='GET'?await communityServices(req,url,path,undefined,who,db(),{checkText,rate,log}):null;if(community)return community;
     const timed=req.method==='GET'?await timingServices(req,url,path,undefined,who,db()):null;if(timed)return timed;
     const extra=req.method==='GET'?await roomServices(req,url,path,undefined,who,db(),{checkText,rate,log}):null;if(extra)return extra;
+    if(req.method==='GET'&&path==='rooms')return json(await searchRooms(db(),url.searchParams.get('q')||'',url.searchParams.get('kind')||'all',Number(url.searchParams.get('offset')||0)));
     if(req.method==='GET'&&path==='state'){
       if(!url.searchParams.get('room'))await checkEpisodes(db(),env.BUCKET);
-      const rooms=(await db().prepare('SELECT * FROM rooms ORDER BY createdAt DESC LIMIT 100').all()).results;
-      const latestEpisode=await db().prepare('SELECT roomId FROM episodes ORDER BY startedAt DESC LIMIT 1').first<{roomId:string}>();
-      const roomId=url.searchParams.get('room')||latestEpisode?.roomId||TBPN_LIVE.id;
-      const room=rooms.find(r=>r.id===roomId);if(!room)throw new ApiError('Room not found.',404);
+      const [rooms,latestEpisode]=await Promise.all([recentRooms(db()),latestEpisodeRoom(db())]);
+      const roomId=url.searchParams.get('room')||latestEpisode?.id||TBPN_LIVE.id;
+      const room=rooms.find(r=>r.id===roomId)||await findRoom(db(),roomId);if(!room)throw new ApiError('Room not found.',404);
+      if(!rooms.some(r=>r.id===roomId))rooms.push(room);
       const moments=(await db().prepare(`SELECT m.id,m.roomId,m.title,m.description,m.category,m.timestamp,m.image,m.status,m.createdAt,m.version,AVG(v.score) score,COUNT(v.itemId) count,(SELECT value FROM settings WHERE key='imageCredit:'||m.id) imageCredit FROM moments m LEFT JOIN votes v ON v.itemId=m.id WHERE m.roomId=? AND m.status='approved' GROUP BY m.id ORDER BY m.createdAt ASC,m.id ASC LIMIT 300`).bind(roomId).all()).results;
       const mine=who.userId?(await db().prepare("SELECT v.itemId,v.tier,v.score FROM votes v JOIN moments m ON m.id=v.itemId WHERE v.userId=? AND m.roomId=? AND m.status='approved'").bind(who.userId,roomId).all()).results:[];
       const hasBoard=who.userId?!!await db().prepare('SELECT userId FROM boards WHERE userId=? AND roomId=?').bind(who.userId,roomId).first():false;
@@ -118,7 +120,7 @@ async function handle(req:Request){
       const pending=who.userId?(await db().prepare("SELECT id,title,status FROM moments WHERE createdBy=? AND roomId=? AND status!='approved' ORDER BY createdAt DESC").bind(who.userId,roomId).all()).results:[];
       const shared=await sharedBoard(roomId),timings=await timingState(db(),roomId);
       const online=(await db().prepare('SELECT COUNT(*) n FROM presence WHERE roomId=? AND seenAt>?').bind(roomId,now()-45000).first<{n:number}>())?.n||0;
-      return json({draftKey:who.userId?await hash("draft:"+who.userId):null,...await communityState(db(),roomId,who.userId),rooms,room,moments:moments.map(m=>{let credit=null;try{const c=JSON.parse(String(m.imageCredit||'null'));if(c?.image===m.image)credit=c;}catch{}const timing=timings[String(m.id)];return {...m,imageCredit:credit,timestamp:timing?timing.seconds??0:m.timestamp,hasTimestamp:timing?timing.seconds!==null:Number(m.timestamp)>0,timing:timing||null};}),shared,revision:room.revision,catalogRevision:Number(await setting('catalogRevision','0')),uploads:await uploadQuota(),online,mine,hasBoard,used,limit,stats,pending,verified:who.verified,admin:who.admin,canModerate:await canModerate(who,db()),account:who.account?{email:who.account.email,name:who.account.displayName}:null,verification:env.TURNSTILE_SITE_KEY&&env.TURNSTILE_SECRET_KEY?'turnstile':'browser',siteKey:env.TURNSTILE_SITE_KEY&&env.TURNSTILE_SECRET_KEY?env.TURNSTILE_SITE_KEY:null});
+      return json({latestEpisode,draftKey:who.userId?await hash("draft:"+who.userId):null,...await communityState(db(),roomId,who.userId),rooms,room,moments:moments.map(m=>{let credit=null;try{const c=JSON.parse(String(m.imageCredit||'null'));if(c?.image===m.image)credit=c;}catch{}const timing=timings[String(m.id)];return {...m,imageCredit:credit,timestamp:timing?timing.seconds??0:m.timestamp,hasTimestamp:timing?timing.seconds!==null:Number(m.timestamp)>0,timing:timing||null};}),shared,revision:room.revision,catalogRevision:Number(await setting('catalogRevision','0')),uploads:await uploadQuota(),online,mine,hasBoard,used,limit,stats,pending,verified:who.verified,admin:who.admin,canModerate:await canModerate(who,db()),account:who.account?{email:who.account.email,name:who.account.displayName}:null,verification:env.TURNSTILE_SITE_KEY&&env.TURNSTILE_SECRET_KEY?'turnstile':'browser',siteKey:env.TURNSTILE_SITE_KEY&&env.TURNSTILE_SECRET_KEY?env.TURNSTILE_SITE_KEY:null});
     }
     if(req.method==='GET'&&path==='admin'){
       if(!who.admin)throw new ApiError('Admin sign-in required.',403);
@@ -259,7 +261,7 @@ async function handle(req:Request){
         await touch(moment.roomId);
       }else if(b.action==='room'){
         const title=str(b.title,90,true),description=str(b.description||'',400),videoId=youtube(b.video||'');const id=identifier();
-        const inserted=await db().prepare('INSERT INTO rooms (id,title,description,videoId,status,createdAt) SELECT ?,?,?,?,?,? WHERE (SELECT COUNT(*) FROM rooms)<100 RETURNING id').bind(id,title,description,videoId,'open',now()).first();if(!inserted)throw new ApiError('The site has reached its 100 board tabs. Reuse an existing tab.',429);await catalog();await log(actor,'room',title);return json({ok:true,roomId:id});
+        const inserted=await db().prepare("INSERT INTO rooms (id,title,description,videoId,status,createdAt) SELECT ?,?,?,?,?,? WHERE (SELECT COUNT(*) FROM rooms r WHERE r.id NOT IN ('tbpn-live','the-warm-up') AND NOT EXISTS (SELECT 1 FROM episodes e WHERE e.roomId=r.id))<100 RETURNING id").bind(id,title,description,videoId,'open',now()).first();if(!inserted)throw new ApiError('The site has reached its 100 custom boards. Reuse an existing board. Automatic episode boards have a separate archive.',429);await catalog();await log(actor,'room',title);return json({ok:true,roomId:id});
       }else if(b.action==='editRoom'){
         const id=str(b.id,100,true),title=str(b.title,90,true),description=str(b.description||'',400),videoId=youtube(b.video||'');
         if(!await db().prepare('SELECT id FROM rooms WHERE id=?').bind(id).first())throw new ApiError('Room not found.',404);

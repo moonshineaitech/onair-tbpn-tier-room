@@ -5,7 +5,7 @@ import {ChevronDown,ChevronUp,ExternalLink,Maximize2,Minimize2,Pause,Play,Radio,
 import {inShowWindow,SHOW_SCHEDULE} from '@/lib/show-schedule';
 import {FALLBACK_REPLAY,type Broadcast,type BroadcastVideo} from '@/lib/tbpn-stream';
 
-export type PlaybackRequest={id:number;videoId:string|null;start:number;title:string};
+export type PlaybackRequest={followLive?:boolean;id:number;videoId:string|null;start:number;title:string};
 type Player={playVideo:()=>void;pauseVideo:()=>void;mute:()=>void;unMute:()=>void;setVolume:(n:number)=>void;loadVideoById:(v:{videoId:string;startSeconds?:number})=>void;getDuration:()=>number;getCurrentTime:()=>number;getVideoData:()=>{video_id?:string};seekTo:(seconds:number,allowSeekAhead:boolean)=>void;destroy:()=>void};
 type Youtube={Player:new(element:HTMLElement,options:unknown)=>Player};
 type YoutubeWindow=Window&{YT?:Youtube;onYouTubeIframeAPIReady?:()=>void};
@@ -26,13 +26,15 @@ export default function FloatingPlayer({open,reveal,onOpen,onClose,request,onClo
  const [broadcast,setBroadcast]=useState<Broadcast|null>(null),[mode,setMode]=useState<Mode>('mini'),[manual,setManual]=useState<(BroadcastVideo&{start:number;requestId:number})|null>(null),[volume,setVolume]=useState(70),[volumeOpen,setVolumeOpen]=useState(false),[muted,setMuted]=useState(true),[playing,setPlaying]=useState(false),[ready,setReady]=useState(false),[blocked,setBlocked]=useState(false),[error,setError]=useState(''),[retry,setRetry]=useState(0);
  const clockCallback=useRef(onClock);clockCallback.current=onClock;
  const lastCheck=useRef(0),volumeRoot=useRef<HTMLDivElement>(null),volumeRef=useRef(70),host=useRef<HTMLDivElement>(null),player=useRef<Player|null>(null),playerReady=useRef(false),mutedRef=useRef(true),modeBeforeCollapse=useRef<Mode>('mini'),livePositioned=useRef<string|null>(null);
+ const broadcastRef=useRef(broadcast);broadcastRef.current=broadcast;
  const active=manual||broadcast?.selected,activeRef=useRef(active);activeRef.current=active;
  const start=manual?.start||0,startRef=useRef(start);startRef.current=start;
  const jumpToLive=useCallback((target:Player|null=player.current)=>{const current=activeRef.current;if(!target||!current?.isLive)return false;const edge=target.getDuration();if(!Number.isFinite(edge)||edge<=0)return false;livePositioned.current=current.videoId;target.seekTo(Math.max(0,edge-3),true);return true;},[]);
  const refresh=useCallback(async(signal?:AbortSignal)=>{lastCheck.current=Date.now();try{const r=await fetch('/api/stream',{cache:'no-store',signal});if(!r.ok)throw new Error();const result=await r.json() as Broadcast;if(!/^[-\w]{11}$/.test(result.selected?.videoId))throw new Error();setBroadcast(result);window.dispatchEvent(new CustomEvent('onair:broadcast',{detail:result}));}catch(e){if((e as Error).name==='AbortError')return;setBroadcast(previous=>previous?{...previous,stale:true}:{selected:FALLBACK_REPLAY,replay:FALLBACK_REPLAY,checkedAt:0,nextCheckAt:0,stale:true});}},[]);
  useEffect(()=>{const controller=new AbortController();void refresh(controller.signal);const tick=()=>{if(document.visibilityState==='visible'&&Date.now()-lastCheck.current>=(inShowWindow()?14000:59000))void refresh(controller.signal);};const interval=setInterval(tick,15000);document.addEventListener('visibilitychange',tick);return()=>{controller.abort();clearInterval(interval);document.removeEventListener('visibilitychange',tick);};},[refresh]);
  useEffect(()=>{if(!reveal)return;setMode('mini');},[reveal]);
- useEffect(()=>{if(!request)return;const explicit=request.videoId&&/^[-\w]{11}$/.test(request.videoId)?request.videoId:null;const current=activeRef.current;if(!explicit&&!current)return;setManual({videoId:explicit||current!.videoId,title:request.title,isLive:false,durationSeconds:0,start:request.start,requestId:request.id});setMode('mini');},[request]);
+ useEffect(()=>{if(!request){setManual(null);return;}if(request.followLive&&!broadcastRef.current)return;const explicit=request.videoId&&/^[-\w]{11}$/.test(request.videoId)?request.videoId:null;const current=activeRef.current;if(!explicit&&!current)return;setManual({videoId:explicit||current!.videoId,title:request.title,isLive:!!request.followLive&&!!broadcastRef.current?.selected.isLive&&!broadcastRef.current?.stale&&broadcastRef.current.selected.videoId===explicit,durationSeconds:0,start:request.start,requestId:request.id});setMode('mini');},[request,!!broadcast]);
+ useEffect(()=>{if(manual?.isLive&&broadcast&&!broadcast.stale&&(!broadcast.selected.isLive||broadcast.selected.videoId!==manual.videoId))setManual(previous=>previous?{...previous,isLive:false}:null);},[manual?.isLive,manual?.videoId,broadcast?.selected.isLive,broadcast?.selected.videoId,broadcast?.stale]);
  useEffect(()=>{
    if(!open||!host.current||!activeRef.current)return;
    let cancelled=false;setError('');setReady(false);playerReady.current=false;livePositioned.current=null;
@@ -53,7 +55,7 @@ export default function FloatingPlayer({open,reveal,onOpen,onClose,request,onClo
  function adjustVolume(value:number){volumeRef.current=value;setVolume(value);mutedRef.current=value===0;setMuted(value===0);player.current?.setVolume(value);if(value)player.current?.unMute();else player.current?.mute();}
  function playback(){if(!player.current||!ready)return;if(playing)player.current.pauseVideo();else player.current.playVideo();}
  function collapse(){setVolumeOpen(false);if(mode==='collapsed')setMode(modeBeforeCollapse.current);else{modeBeforeCollapse.current=mode;setMode('collapsed');}}
- const live=!!active?.isLive&&!broadcast?.stale&&!manual,label=!active?'CONNECTING':manual?'EPISODE':live?'LIVE NOW':broadcast?.stale?'TBPN REPLAY':'LATEST FULL SHOW';
+ const live=!!active?.isLive&&!!broadcast?.selected.isLive&&broadcast.selected.videoId===active.videoId&&!broadcast.stale,label=!active?'CONNECTING':live?'LIVE NOW':manual?'EPISODE':broadcast?.stale?'TBPN REPLAY':'LATEST FULL SHOW';
  const url='https://www.youtube.com/watch?v='+(active?.videoId||FALLBACK_REPLAY.videoId)+(manual?'&t='+Math.floor(start)+'s':'');
  if(!open)return <button className="floating-reopen" onClick={onOpen}><Radio size={14}/><span>Watch TBPN</span><ChevronUp size={14}/></button>;
  return <aside id="stream-panel" className={`floating-player player-${mode}`} aria-label="TBPN floating video player">
