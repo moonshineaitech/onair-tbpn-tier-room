@@ -22,5 +22,5 @@ export function validateImage(bytes:Uint8Array,contentType:string){
   }
   if(!width||!height)throw new Error('This image could not be read. Please export it as PNG, JPEG or WebP.');
   if(width>4096||height>4096||width*height>16000000)throw new Error('Images must be at most 4096 × 4096 pixels and 16 megapixels.');
-  return {bytes,contentType};
+  return {bytes,contentType,width,height};
 }

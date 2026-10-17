@@ -34,6 +34,17 @@
 .share-caption > button,.share-caption > a { display:flex; gap:5px; align-items:center; font-size:10px; color:#3f5e34; }
 .share-status { display:flex; gap:5px; align-items:center; font-size:11px; color:#3b6539; min-height:15px; }
 .share-board-loading { display:flex; align-items:center; gap:9px; padding:25px 0; font-size:12px; }
+.share-social-preview { margin:18px 0; border:1px solid #55483e; border-radius:7px; background:#211f1e; overflow:hidden; }
+.share-social-preview > small { display:block; padding:9px 12px; font-size:8px; letter-spacing:1.2px; color:#d1ad96; border-bottom:1px solid #55483e; }
+.share-social-preview > img { display:block; width:100%; height:auto; }
+.shared-board-invitation { display:flex; align-items:center; justify-content:space-between; gap:20px; padding:16px; margin:0 0 16px; border:1px solid #746052; border-radius:7px; background:linear-gradient(110deg,#332a25,#24211f); }
+.shared-board-invitation small { font-size:8px; letter-spacing:1.3px; color:#e0ad96; }
+.shared-board-invitation h3 { font-size:16px; font-weight:500; letter-spacing:-.2px; margin:7px 0; color:#f5e9dd; }
+.shared-board-invitation p { font-size:10px; line-height:1.5; color:#c1ac9e; margin:0; }
+.shared-board-invitation > a,.make-own-board-link { display:flex; gap:8px; align-items:center; justify-content:center; padding:12px 14px; background:#f1b29a; border:1px solid #f1b29a; color:#30231e; border-radius:5px; font-size:11px; font-weight:600; flex-shrink:0; text-decoration:none; }
+.shared-board-invitation > a:hover,.make-own-board-link:hover { background:#ffcab4; }
+.shared-board-invitation > a:focus-visible,.make-own-board-link:focus-visible { outline:2px solid #fff; outline-offset:3px; }
+@media(max-width:760px) { .shared-board-invitation { flex-direction:column; align-items:stretch; gap:13px; padding:14px; } .shared-board-invitation h3 { font-size:15px; } .shared-board-invitation > a { justify-content:center; width:100%; } }
 @keyframes quick-enter { from { opacity:0; transform:translateY(4px); } to { opacity:1; transform:translateY(0); } }
 @media(min-width:1200px) {
  .tier-app.chat-open .board-page { padding-right:386px; }
