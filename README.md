@@ -98,3 +98,8 @@ The background collector uses `@vercel/queue` in `vercel-gateway/`, with a durab
 
 
 Live broadcasts open at the live edge rather than requesting a zero-second DVR offset. Once playback metadata is ready, the player seeks to the current end with a three-second buffer. Go live returns a rewound or paused viewer to the current broadcast; explicit moment timestamps and replay playback keep their requested positions. Today’s episode topics are stored as board data, separate from source code.
+
+
+## Image cards and Unranked tray
+
+The Unranked catalog wraps into a responsive grid with a visible available count and independent vertical scrolling. All six ranking tiers stay on screen. A 1280 by 720 browser shows the twenty-card catalog at once; a 480 by 844 viewport shows ten cards before scrolling. The tray supports mouse dragging, keyboard scrolling, and a separate touch drag grip so swiping the cards can scroll the catalog. Source and license credits for the episode images are recorded in each moment’s context and in docs/episode-image-credits.md. Uploaded image records remain editable through Admin.

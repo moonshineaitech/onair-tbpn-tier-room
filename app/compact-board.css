@@ -277,3 +277,72 @@
   .tier-app .moment-card small { margin-top: 3px; font-size: 7px; }
   .tier-app .moment-card .card-caption > span { font-size: 10px; }
 }
+
+
+/* A multi-row moment tray keeps the catalog visible while every tier stays on screen. */
+.tier-app { --card-h: clamp(26px, calc((100dvh - 300px) / 10.6 - 6px), 46px); }
+.tier-app .tier-board { grid-template-rows: repeat(6, minmax(0, 1fr)) minmax(0, 6fr); max-height: 660px; }
+.tier-app .tier-U { display: flex; flex-direction: column; align-items: stretch; min-height: 0; border-top: 2px solid #535353; background: #171717; }
+.tier-app .tier-U > .tier-label { display: none; }
+.tier-app .unranked-heading { height: 28px; min-height: 28px; display: flex; align-items: center; gap: 8px; padding: 0 10px; border-bottom: 1px solid #383838; background: #252525; color: #ccc; }
+.tier-app .unranked-heading > svg { color: #ff9c9c; }
+.tier-app .unranked-heading h2 { margin: 0; font-family: inherit; font-size: 11px; font-weight: 600; letter-spacing: 0; color: #f1f1f1; }
+.tier-app .unranked-total { padding: 2px 6px; background: #3a3a3a; border: 1px solid #484848; border-radius: 4px; font-size: 8px; color: #d1d1d1; white-space: nowrap; }
+.tier-app .unranked-heading p { margin: 0 0 0 auto; color: #a6a6a6; font-size: 9px; white-space: nowrap; }
+.tier-app .unranked-heading > button { display: inline-flex; align-items: center; gap: 3px; border: 1px solid #555; border-radius: 3px; padding: 3px 6px; font-size: 9px; color: #ddd; }
+.tier-app .tier-U .tier-content { display: grid; grid-template-columns: repeat(auto-fill, minmax(174px, 1fr)); grid-auto-rows: 40px; align-content: start; align-items: stretch; gap: 5px; padding: 6px 9px; flex: 1; min-height: 0; height: auto; overflow: auto; overscroll-behavior: contain; scrollbar-gutter: stable; scroll-padding: 7px; }
+.tier-app .tier-U .moment-card { width: 100%; height: 40px; min-height: 40px; max-height: none; touch-action: pan-y; }
+.tier-app .moment-card > .moment-art, .tier-app .drag-ghost > .moment-art { width: auto; height: calc(100% - 8px); flex: 0 0 auto; aspect-ratio: 1; }
+.tier-app .moment-art > img { width: 100%; height: 100%; object-fit: cover; }
+.tier-app .tier-U .moment-card .card-caption { padding: 2px 6px 2px 0 !important; }
+.tier-app .tier-U .moment-card .card-caption > span:first-child { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; white-space: normal; max-height: 25px; line-height: 1.15; font-size: 10px; }
+.tier-app .tier-U .moment-card small { margin-top: 3px; font-size: 7px; }
+.tier-app .tier-U .card-edit-hint { position: absolute; right: 5px; bottom: 4px; margin: 0; width: 10px; height: 10px; }
+.tier-app .card-drag-handle { display: inline-flex; align-items: center; justify-content: center; touch-action: none; cursor: grab; }
+.tier-app .tier-U .card-drag-handle { padding: 3px 5px; margin: -3px 0 -3px -3px; }
+.tier-app .tier-U .drop-placeholder { width: auto; height: 40px; }
+.tier-app .tier-U .drop-hint { grid-column: 1 / -1; }
+@media (max-width: 590px) {
+  .tier-app .tier-U .tier-content { grid-template-columns: repeat(2, minmax(0, 1fr)); padding: 6px; gap: 5px; }
+  .tier-app .unranked-heading { gap: 6px; padding: 0 7px; height: 27px; min-height: 27px; }
+  .tier-app .unranked-heading h2 { font-size: 10px; }
+  .tier-app .unranked-heading p { font-size: 7px; }
+  .tier-app .unranked-heading p > span { display: none; }
+}
+@media (max-height: 620px) {
+  .tier-app .tier-label > b { font-size: 18px; }
+  .tier-app .tier-label > span { font-size: 5px; }
+  .tier-app .unranked-heading { height: 24px; min-height: 24px; }
+  .tier-app .unranked-heading h2 { font-size: 9px; }
+  .tier-app .unranked-heading p { font-size: 7px; }
+  .tier-app .tier-U .tier-content { grid-auto-rows: 40px; padding-top: 5px; padding-bottom: 5px; }
+  .tier-app .tier-U .moment-card { height: 40px; min-height: 40px; }
+  .tier-app .tier-U .moment-card .card-caption > span:first-child { font-size: 9px; max-height: 21px; }
+}
+
+.tier-app .unranked-heading .touch-hint { display: none; }
+@media (pointer: coarse) { .tier-app .unranked-heading .pointer-hint { display: none; } .tier-app .unranked-heading .touch-hint { display: inline; } }
+@media (max-width: 590px) { .tier-app .unranked-heading p > .pointer-hint { display: inline; } .tier-app .unranked-heading p > .tray-scroll-hint { display: none; } }
+@media (max-width: 590px) and (pointer: coarse) { .tier-app .unranked-heading p > .pointer-hint { display: none; } .tier-app .unranked-heading p > .touch-hint { display: inline; } }
+
+@media (min-height: 621px) { .tier-app .tier-label > b { font-size: 24px; } }
+@media (max-height: 620px) { .tier-app .tier-label > span { display: none; } }
+
+.tier-app .tier-U .tier-content:focus-visible { outline: 2px solid #ffabab; outline-offset: -2px; }
+
+.tier-app .tier-U .moment-card:has(.card-audience) .card-caption > span:first-child { -webkit-line-clamp: 1; max-height: 12px; }
+.tier-app .tier-row .moment-card:has(.card-audience) .card-caption { padding-top: 2px !important; padding-bottom: 2px !important; }
+.tier-app .tier-row:not(.tier-U) .moment-card:has(.card-audience) small { display: none; }
+.tier-app .tier-row:not(.tier-U) .moment-card:has(.card-audience) .card-caption > span:first-child { font-size: 10px; line-height: 1.1; }
+.tier-app .tier-row .moment-card .card-caption > .card-audience { margin-top: 1px; font-size: 6px; line-height: 1.1; }
+
+@media (max-height: 620px) {
+  .tier-app .app-header { height: 38px; min-height: 38px; }
+  .tier-app .page-intro { height: 42px; min-height: 42px; padding: 4px 0; }
+  .tier-app .room-tabbar { height: 26px; min-height: 26px; }
+  .tier-app .board-toolbar { height: 62px; min-height: 62px; }
+  .tier-app .view-tabs { height: 30px; min-height: 30px; }
+  .tier-app .view-tabs > button { padding: 7px 0; }
+  .tier-app .board-tools { height: 32px; min-height: 32px; padding: 2px 0; }
+  .tier-app .board-context { height: 22px; min-height: 22px; }
+}
