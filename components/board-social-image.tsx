@@ -4,7 +4,7 @@ export default function BoardSocialImage({board,images}:{board:PublicBoard;image
  const rows=shareRows(board.post,board.moments),total=rows.reduce((n,r)=>n+r.moments.length,0),shown=rows.map(r=>({...r,shown:total<=24?r.moments:r.moments.slice(0,4)}));
  const raw=shown.map(r=>Math.max(44,6+Math.ceil(r.shown.length/4)*38)),sum=raw.reduce((n,h)=>n+h,0),space=396,scale=Math.min(1,space/sum),extra=Math.max(0,(space-sum)/6);
  return <div style={{width:1200,height:630,display:'flex',position:'relative',background:'#151515',color:'#f5ece4',fontFamily:'sans-serif'}}>
-  <div style={{position:'absolute',top:24,left:32,display:'flex',fontSize:17,fontWeight:700,letterSpacing:2,color:'#ff9c9c'}}>ON AIR / THE TBPN TIER ROOM</div>
+  <div style={{position:'absolute',top:24,left:32,display:'flex',fontSize:17,fontWeight:700,letterSpacing:2,color:'#ff9c9c'}}>ON AIR / THE LIVE TIER ROOM</div>
   <div style={{position:'absolute',top:25,right:32,display:'flex',fontSize:12,letterSpacing:1,color:'#c4b2a5'}}>PUBLISHED SNAPSHOT</div>
   <div style={{position:'absolute',top:53,left:32,width:1136,height:40,display:'flex',fontSize:30,fontWeight:700,overflow:'hidden'}}>{board.post.title}</div>
   <div style={{position:'absolute',top:99,left:32,width:1136,display:'flex',fontSize:17,color:'#c2b3a6'}}>{board.room.title+' · By '+board.post.byline}</div>

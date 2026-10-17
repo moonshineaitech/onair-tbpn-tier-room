@@ -1,3 +1,6 @@
+import {platformServices} from '@/lib/platform-services';
+import {managesRoom} from '@/lib/room-permissions';
+import {resolveStreamSource} from '@/lib/stream-resolution';
 import {findRoom,recentRooms,latestEpisodeRoom,searchRooms} from '@/lib/episode-directory';
 import {timingState} from '@/lib/moment-timing';
 import {timingServices} from '@/lib/timing-services';
@@ -9,7 +12,7 @@ import {assertAllowedText,defaultWords} from '@/lib/moderation';
 import {currentBroadcast} from '@/lib/tbpn-stream';
 import {roomServices,canModerate,ServiceError} from '@/lib/room-services';
 import {communityServices,communityState} from '@/lib/community-services';
-import {checkEpisodes,finishEpisode} from '@/lib/episode-lifecycle';
+import {checkEpisodes,finishEpisode,syncEpisodes} from '@/lib/episode-lifecycle';
 import {trustedGateway,exchangeLoginCode} from '@/lib/gateway-auth';
 export const dynamic='force-dynamic';
 const db=()=>{if(!env.DB)throw new Error('Database is not connected. Please try again shortly.');return env.DB;};
@@ -25,13 +28,14 @@ async function identity(req:Request){
   const cookie=req.headers.get('cookie')?.match(/(?:^|;\s*)onair_session=([a-f0-9-]{36})/)?.[1];
   const session=cookie?await db().prepare('SELECT * FROM sessions WHERE id=? AND expires>?').bind(await hash(cookie),now()).first():null;
   if(!account&&typeof session?.account==='string'){try{const saved=JSON.parse(session.account);if(typeof saved.userId==='string'&&typeof saved.email==='string'&&typeof saved.displayName==='string')account=saved;}catch{}}
+  if(account&&session&&typeof session.account!=='string'){await db().batch([db().prepare('UPDATE room_hosts SET ownerId=? WHERE ownerId=?').bind('account:'+account.userId,'visitor:'+session.id),db().prepare('UPDATE sessions SET account=? WHERE id=?').bind(JSON.stringify(account),session.id)]);}
   const admin=!!account&&admins().includes(account.email.toLowerCase());
   return {admin,account,ipHash,verified:admin||!!session,userId:account?'account:'+account.userId:session?'visitor:'+session.id:null};
 }
 async function rate(key:string,limit:number,windowMs=60000){
   const bucket=Math.floor(now()/windowMs),full=key+':'+bucket;
   const r=await db().prepare('INSERT INTO rates (key,count,expires) VALUES (?,1,?) ON CONFLICT(key) DO UPDATE SET count=count+1 RETURNING count').bind(full,now()+windowMs).first<{count:number}>();
-  if((r?.count||0)>limit)throw new ApiError('A little too fast. Please try again in a minute.',429);
+  if((r?.count||0)>limit)throw new ApiError(windowMs>=86400000?'Daily limit reached. Try again after midnight UTC.':windowMs>=3600000?'Hourly limit reached. Please try again later.':'A little too fast. Please try again in a minute.',429);
 }
 async function seed(){
   const ready=await db().prepare("SELECT COUNT(*) n FROM rooms WHERE id IN ('tbpn-live','the-warm-up')").first<{n:number}>();if(ready?.n===2)return;
@@ -43,9 +47,9 @@ async function seed(){
   ]);
 }
 async function setting(key:string,fallback:string){return (await db().prepare('SELECT value FROM settings WHERE key=?').bind(key).first<{value:string}>())?.value??fallback;}
-async function checkText(text:string){try{await assertAllowedText(db(),text);}catch(e){throw new ApiError((e as Error).message);}}
+async function checkText(text:string,roomId?:string){try{await assertAllowedText(db(),text,roomId);}catch(e){throw new ApiError((e as Error).message);}}
 function str(v:unknown,max:number,required=false){if(typeof v!=='string'||v.length>max||(required&&!v.trim()))throw new ApiError('Please check the required fields and character limits.');return v.trim();}
-function youtube(v:unknown){const s=str(v,300);if(!s)return null;if(s==='tbpn-live'||s==='channel:'+TBPN_CHANNEL)return 'channel:'+TBPN_CHANNEL;if(/^[\w-]{11}$/.test(s))return s;try{const u=new URL(s);if(['youtube.com','www.youtube.com','m.youtube.com','youtu.be'].includes(u.hostname)){if(u.pathname.toLowerCase().replace(/\/$/,'')==='/@tbpnlive/live'||u.pathname.toLowerCase().replace(/\/$/,'')==='/@tbpnlive')return 'channel:'+TBPN_CHANNEL;const id=u.hostname==='youtu.be'?u.pathname.slice(1).split('/')[0]:u.searchParams.get('v')||u.pathname.match(/\/(?:live|embed|shorts)\/([\w-]{11})/)?.[1];if(id&&/^[\w-]{11}$/.test(id))return id;}}catch{}throw new ApiError('Add a valid YouTube video or livestream URL.');}
+async function source(v:unknown){try{return await resolveStreamSource(str(v,1500));}catch(e){throw new ApiError((e as Error).message);}}
 async function log(actor:string,action:string,detail:string){await db().prepare('INSERT INTO audit (id,actor,action,detail,createdAt) VALUES (?,?,?,?,?)').bind(identifier(),actor,action,detail,now()).run();}
 async function sharedBoard(roomId:string){
   const items=(await db().prepare("SELECT id FROM moments WHERE roomId=? AND status='approved' ORDER BY createdAt,id").bind(roomId).all<{id:string}>()).results;
@@ -90,23 +94,25 @@ async function stream(req:Request,roomId:string){
 async function handle(req:Request){
   try{
     const url=new URL(req.url),path=url.pathname.replace(/^\/api\//,'');
-    if(req.method==='GET'&&path.startsWith('image/')){
+    if((req.method==='GET'||req.method==='HEAD')&&path.startsWith('image/')){
       const key=path.slice(6);if(!/^[a-f0-9-]{36}$/.test(key))throw new ApiError('Image not found.',404);
-      const visible=await db().prepare('SELECT id FROM moments WHERE image=? AND status=?').bind('/api/image/'+key,'approved').first();
-      if(!visible&&!(await identity(req)).admin)throw new ApiError('Image not found.',404);
+      const visible=await db().prepare('SELECT roomId,status FROM moments WHERE image=?').bind('/api/image/'+key).first<{roomId:string;status:string}>();
+      if(!visible||visible.status!=='approved'&&!await managesRoom(await identity(req),db(),visible.roomId))throw new ApiError('Image not found.',404);
       const object=await env.BUCKET?.get(key);if(!object)throw new ApiError('Image not found.',404);
-      return new Response(object.body,{headers:{'Content-Type':object.httpMetadata?.contentType||'image/jpeg','Cache-Control':'private, max-age=300','X-Content-Type-Options':'nosniff'}});
+      return new Response(req.method==='HEAD'?null:object.body,{headers:{'Content-Type':object.httpMetadata?.contentType||'image/jpeg','Cache-Control':'private, max-age=300','X-Content-Type-Options':'nosniff'}});
     }
     await seed();
-    if(req.method==='GET'&&(path==='stream'||path==='lifecycle')){const result=await checkEpisodes(db(),env.BUCKET);return json(path==='stream'?result.broadcast:{ok:true,checkedAt:result.broadcast.checkedAt,stale:result.stale,created:result.created,ended:result.ended,newsletter:result.newsletter,timing:result.timing});}
+    if(req.method==='GET'&&path==='stream'){const broadcast=await currentBroadcast(db());await syncEpisodes(db(),broadcast);return json(broadcast);}
+    if(req.method==='GET'&&path==='lifecycle'){const result=await checkEpisodes(db(),env.BUCKET);return json({ok:true,checkedAt:result.broadcast.checkedAt,stale:result.stale,created:result.created,ended:result.ended,newsletter:result.newsletter,timing:result.timing});}
     if(req.method==='GET'&&path==='events')return await stream(req,url.searchParams.get('room')||SAMPLE_ROOM.id);
     const who=await identity(req);
+    const platformRead=req.method==='GET'?await platformServices(req,url,path,undefined,who,db(),{checkText,rate,log}):null;if(platformRead)return platformRead;
     const community=req.method==='GET'?await communityServices(req,url,path,undefined,who,db(),{checkText,rate,log}):null;if(community)return community;
     const timed=req.method==='GET'?await timingServices(req,url,path,undefined,who,db()):null;if(timed)return timed;
     const extra=req.method==='GET'?await roomServices(req,url,path,undefined,who,db(),{checkText,rate,log}):null;if(extra)return extra;
     if(req.method==='GET'&&path==='rooms')return json(await searchRooms(db(),url.searchParams.get('q')||'',url.searchParams.get('kind')||'all',Number(url.searchParams.get('offset')||0)));
     if(req.method==='GET'&&path==='state'){
-      if(!url.searchParams.get('room'))await checkEpisodes(db(),env.BUCKET);
+      // Render saved room data immediately; stream discovery and collectors run separately.
       const [rooms,latestEpisode]=await Promise.all([recentRooms(db()),latestEpisodeRoom(db())]);
       const roomId=url.searchParams.get('room')||latestEpisode?.id||TBPN_LIVE.id;
       const room=rooms.find(r=>r.id===roomId)||await findRoom(db(),roomId);if(!room)throw new ApiError('Room not found.',404);
@@ -120,7 +126,7 @@ async function handle(req:Request){
       const pending=who.userId?(await db().prepare("SELECT id,title,status FROM moments WHERE createdBy=? AND roomId=? AND status!='approved' ORDER BY createdAt DESC").bind(who.userId,roomId).all()).results:[];
       const shared=await sharedBoard(roomId),timings=await timingState(db(),roomId);
       const online=(await db().prepare('SELECT COUNT(*) n FROM presence WHERE roomId=? AND seenAt>?').bind(roomId,now()-45000).first<{n:number}>())?.n||0;
-      return json({latestEpisode,draftKey:who.userId?await hash("draft:"+who.userId):null,...await communityState(db(),roomId,who.userId),rooms,room,moments:moments.map(m=>{let credit=null;try{const c=JSON.parse(String(m.imageCredit||'null'));if(c?.image===m.image)credit=c;}catch{}const timing=timings[String(m.id)];return {...m,imageCredit:credit,timestamp:timing?timing.seconds??0:m.timestamp,hasTimestamp:timing?timing.seconds!==null:Number(m.timestamp)>0,timing:timing||null};}),shared,revision:room.revision,catalogRevision:Number(await setting('catalogRevision','0')),uploads:await uploadQuota(),online,mine,hasBoard,used,limit,stats,pending,verified:who.verified,admin:who.admin,canModerate:await canModerate(who,db()),account:who.account?{email:who.account.email,name:who.account.displayName}:null,verification:env.TURNSTILE_SITE_KEY&&env.TURNSTILE_SECRET_KEY?'turnstile':'browser',siteKey:env.TURNSTILE_SITE_KEY&&env.TURNSTILE_SECRET_KEY?env.TURNSTILE_SITE_KEY:null});
+      return json({latestEpisode,draftKey:who.userId?await hash("draft:"+who.userId):null,...await communityState(db(),roomId,who.userId),rooms,room,moments:moments.map(m=>{let credit=null;try{const c=JSON.parse(String(m.imageCredit||'null'));if(c?.image===m.image)credit=c;}catch{}const timing=timings[String(m.id)];return {...m,imageCredit:credit,timestamp:timing?timing.seconds??0:m.timestamp,hasTimestamp:timing?timing.seconds!==null:Number(m.timestamp)>0,timing:timing||null};}),shared,revision:room.revision,catalogRevision:Number(await setting('catalogRevision','0')),uploads:await uploadQuota(),online,mine,hasBoard,used,limit,stats,pending,verified:who.verified,admin:who.admin,canManage:await managesRoom(who,db(),roomId),canModerate:await canModerate(who,db(),roomId),account:who.account?{email:who.account.email,name:who.account.displayName}:null,verification:env.TURNSTILE_SITE_KEY&&env.TURNSTILE_SECRET_KEY?'turnstile':'browser',siteKey:env.TURNSTILE_SITE_KEY&&env.TURNSTILE_SECRET_KEY?env.TURNSTILE_SITE_KEY:null});
     }
     if(req.method==='GET'&&path==='admin'){
       if(!who.admin)throw new ApiError('Admin sign-in required.',403);
@@ -168,6 +174,7 @@ async function handle(req:Request){
       const token=req.headers.get('cookie')?.match(/(?:^|;\s*)onair_session=([a-f0-9-]{36})/)?.[1];if(token)await db().prepare('DELETE FROM sessions WHERE id=?').bind(await hash(token)).run();
       return json({ok:true},200,{'Set-Cookie':'onair_session=; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=0'});
     }
+    const platformWrite=await platformServices(req,url,path,b,who,db(),{checkText,rate,log});if(platformWrite)return platformWrite;
     const communityWrite=await communityServices(req,url,path,b,who,db(),{checkText,rate,log});if(communityWrite)return communityWrite;
     const timingWrite=await timingServices(req,url,path,b,who,db());if(timingWrite)return timingWrite;
     const service=await roomServices(req,url,path,b,who,db(),{checkText,rate,log});if(service)return service;
@@ -214,21 +221,22 @@ async function handle(req:Request){
     }
     if(path==='moments'){
       const roomId=str(b.roomId,100,true),{title,description,category,timestamp}=momentFields(b);
-      await checkText(title+' '+description);
+      await checkText(title+' '+description,roomId);
+      const managing=await managesRoom(who,db(),roomId);
       const room=await db().prepare('SELECT status FROM rooms WHERE id=?').bind(roomId).first();if(!room||room.status!=='open')throw new ApiError('This room is closed for submissions.',403);
-      if(!who.admin)await rate('submit:'+who.ipHash,8,86400000);
+      if(!managing)await rate('submit:'+who.ipHash,8,86400000);
       const limit=Number(await setting('submissionLimit','3'));
-      const tier=who.admin?str(b.tier||'U',1,true):'U';if(![...TIERS.map(t=>t.id),'U'].includes(tier))throw new ApiError('Invalid tier.');
+      const tier=managing?str(b.tier||'U',1,true):'U';if(![...TIERS.map(t=>t.id),'U'].includes(tier))throw new ApiError('Invalid tier.');
       const image=await storeImage(b.image),id=identifier();
-      const insert=db().prepare(`INSERT INTO moments (id,roomId,title,description,category,timestamp,image,status,createdBy,ipHash,createdAt) SELECT ?,?,?,?,?,?,?,?,?,?,? WHERE (?=1 OR (SELECT COUNT(*) FROM moments WHERE roomId=? AND (createdBy=? OR ipHash=?))<?) AND (SELECT COUNT(*) FROM moments WHERE roomId=? AND status='approved')<300 RETURNING id`).bind(id,roomId,title,description,category,timestamp,image?.url||null,who.admin?'approved':'pending',who.userId,who.ipHash,now(),who.admin?1:0,roomId,who.userId,who.ipHash,limit,roomId);
+      const insert=db().prepare(`INSERT INTO moments (id,roomId,title,description,category,timestamp,image,status,createdBy,ipHash,createdAt) SELECT ?,?,?,?,?,?,?,?,?,?,? WHERE (?=1 OR (SELECT COUNT(*) FROM moments WHERE roomId=? AND (createdBy=? OR ipHash=?))<?) AND (SELECT COUNT(*) FROM moments WHERE roomId=? AND status='approved')<300 RETURNING id`).bind(id,roomId,title,description,category,timestamp,image?.url||null,managing?'approved':'pending',who.userId,who.ipHash,now(),managing?1:0,roomId,who.userId,who.ipHash,limit,roomId);
       let inserted;try{const results=await db().batch([insert,
-        ...(b.hasTimestamp||timestamp>0?[db().prepare("INSERT INTO moment_timings (itemId,roomId,seconds,source,locked,version,evidence,updatedAt) SELECT ?,?,?,?,1,1,'Captured from player or supplied by author',? WHERE EXISTS (SELECT 1 FROM moments WHERE id=?)").bind(id,roomId,timestamp,who.admin?'admin':'author',now(),id)]:[]),
-        ...(who.admin?[db().prepare('INSERT INTO placements (roomId,itemId,tier,score,position,version,updatedAt) SELECT ?,?,?,?,?,1,? WHERE EXISTS (SELECT 1 FROM moments WHERE id=?)').bind(roomId,id,tier,TIERS.find(t=>t.id===tier)?.value??50,now(),now(),id)]:[]),
+        ...(b.hasTimestamp||timestamp>0?[db().prepare("INSERT INTO moment_timings (itemId,roomId,seconds,source,locked,version,evidence,updatedAt) SELECT ?,?,?,?,1,1,'Captured from player or supplied by author',? WHERE EXISTS (SELECT 1 FROM moments WHERE id=?)").bind(id,roomId,timestamp,managing?'admin':'author',now(),id)]:[]),
+        ...(managing?[db().prepare('INSERT INTO placements (roomId,itemId,tier,score,position,version,updatedAt) SELECT ?,?,?,?,?,1,? WHERE EXISTS (SELECT 1 FROM moments WHERE id=?)').bind(roomId,id,tier,TIERS.find(t=>t.id===tier)?.value??50,now(),now(),id)]:[]),
         db().prepare('UPDATE rooms SET revision=revision+1 WHERE id=? AND EXISTS (SELECT 1 FROM moments WHERE id=?)').bind(roomId,id)
       ]);inserted=results[0].results[0];}catch(e){await discardImage(image);throw e;}
-      if(!inserted){await discardImage(image);throw new ApiError(who.admin?'This board has reached its 300 moment capacity.':`Your submission limit or this board’s capacity has been reached.`,429);}
-      if(who.admin)await log(who.account!.email,'createMoment',title);
-      return json({ok:true,id,message:who.admin?'Published to the live board.':'Submitted for moderator review.'},201);
+      if(!inserted){await discardImage(image);throw new ApiError(managing?'This board has reached its 300 moment capacity.':`Your submission limit or this board’s capacity has been reached.`,429);}
+      if(managing)await log(who.account?.email||who.userId!,'createMoment',title);
+      return json({ok:true,id,message:managing?'Published to the live board.':'Submitted for moderator review.'},201);
     }
     if(path==='report'){
       const itemId=str(b.itemId,100,true),reason=str(b.reason,200,true);await rate('report:'+who.userId,5,3600000);await checkText(reason);
@@ -236,14 +244,18 @@ async function handle(req:Request){
       await db().prepare('INSERT INTO reports (id,itemId,userId,reason,createdAt) VALUES (?,?,?,?,?)').bind(identifier(),itemId,who.userId,reason,now()).run();return json({ok:true});
     }
     if(path==='admin'){
-      if(!who.admin)throw new ApiError('Admin access required.',403);
-      const actor=who.account!.email;
+      if(!who.admin){
+       if(!['editMoment','moderate','editRoom','roomStatus'].includes(b.action))throw new ApiError('Admin access required.',403);
+       const target=['editMoment','moderate'].includes(b.action)?await db().prepare('SELECT roomId FROM moments WHERE id=?').bind(String(b.id||'')).first<{roomId:string}>():{roomId:String(b.id||'')};
+       if(!target||!await managesRoom(who,db(),target.roomId))throw new ApiError('Host access required for this room.',403);
+      }
+      const actor=who.account?.email||who.userId!;
       if(b.action==='editMoment'){
         const id=str(b.id,100,true),version=Number(b.version),{title,description,category,timestamp}=momentFields(b);
         if(!Number.isInteger(version)||version<1)throw new ApiError('Invalid edit version.');
-        await checkText(title+' '+description);
         const current=await db().prepare('SELECT image,roomId,version,timestamp FROM moments WHERE id=?').bind(id).first<{image:string|null;roomId:string;version:number;timestamp:number}>();
         if(!current)throw new ApiError('Moment not found.',404);if(current.version!==version)throw new ApiError('This moment changed while you were editing. Reopen it to edit the latest version.',409);
+        await checkText(title+' '+description,current.roomId);
         const uploaded=await storeImage(b.image);
         const image=uploaded?.url||(b.removeImage?null:current.image);
         let changed;try{changed=await db().prepare('UPDATE moments SET title=?,description=?,category=?,timestamp=?,image=?,version=version+1 WHERE id=? AND version=? RETURNING id').bind(title,description,category,b.timestamp===undefined?current.timestamp:timestamp,image,id,version).first();}catch(e){await discardImage(uploaded);throw e;}
@@ -256,14 +268,16 @@ async function handle(req:Request){
         await db().batch([db().prepare('INSERT INTO settings (key,value) VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value').bind('blockedWords',JSON.stringify(words)),db().prepare('INSERT INTO settings (key,value) VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value').bind('submissionLimit',String(limit))]);
       }else if(b.action==='moderate'){
         const id=str(b.id,100,true),status=str(b.status,20,true);if(!['approved','rejected','hidden'].includes(status))throw new ApiError('Invalid status.');
-        const moment=await db().prepare('SELECT title,description,roomId FROM moments WHERE id=?').bind(id).first<{title:string;description:string;roomId:string}>();if(!moment)throw new ApiError('Moment not found.',404);if(status==='approved')await checkText(moment.title+' '+moment.description);
+        const moment=await db().prepare('SELECT title,description,roomId FROM moments WHERE id=?').bind(id).first<{title:string;description:string;roomId:string}>();if(!moment)throw new ApiError('Moment not found.',404);if(status==='approved')await checkText(moment.title+' '+moment.description,moment.roomId);
         await db().prepare('UPDATE moments SET status=?,version=version+1 WHERE id=?').bind(status,id).run();
         await touch(moment.roomId);
       }else if(b.action==='room'){
-        const title=str(b.title,90,true),description=str(b.description||'',400),videoId=youtube(b.video||'');const id=identifier();
-        const inserted=await db().prepare("INSERT INTO rooms (id,title,description,videoId,status,createdAt) SELECT ?,?,?,?,?,? WHERE (SELECT COUNT(*) FROM rooms r WHERE r.id NOT IN ('tbpn-live','the-warm-up') AND NOT EXISTS (SELECT 1 FROM episodes e WHERE e.roomId=r.id))<100 RETURNING id").bind(id,title,description,videoId,'open',now()).first();if(!inserted)throw new ApiError('The site has reached its 100 custom boards. Reuse an existing board. Automatic episode boards have a separate archive.',429);await catalog();await log(actor,'room',title);return json({ok:true,roomId:id});
+        const title=str(b.title,90,true),description=str(b.description||'',400),videoId=await source(b.video||'');const id=identifier();
+        await checkText(title+' '+description);
+        const inserted=await db().prepare("INSERT INTO rooms (id,title,description,videoId,status,createdAt) SELECT ?,?,?,?,?,? WHERE (SELECT COUNT(*) FROM rooms r WHERE r.id NOT IN ('tbpn-live','the-warm-up') AND NOT EXISTS (SELECT 1 FROM episodes e WHERE e.roomId=r.id))<1000 RETURNING id").bind(id,title,description,videoId,'open',now()).first();if(!inserted)throw new ApiError('The site has reached its 1,000 custom boards. Reuse an existing board. Automatic episode boards have a separate archive.',429);await catalog();await log(actor,'room',title);return json({ok:true,roomId:id});
       }else if(b.action==='editRoom'){
-        const id=str(b.id,100,true),title=str(b.title,90,true),description=str(b.description||'',400),videoId=youtube(b.video||'');
+        const id=str(b.id,100,true),title=str(b.title,90,true),description=str(b.description||'',400),videoId=await source(b.video||'');
+        await checkText(title+' '+description,id);
         if(!await db().prepare('SELECT id FROM rooms WHERE id=?').bind(id).first())throw new ApiError('Room not found.',404);
         await db().prepare('UPDATE rooms SET title=?,description=?,videoId=?,revision=revision+1 WHERE id=?').bind(title,description,videoId,id).run();await catalog();
       }else if(b.action==='roomStatus'){
@@ -277,3 +291,4 @@ async function handle(req:Request){
 }
 export const GET=handle;
 export const POST=handle;
+export const HEAD=handle;

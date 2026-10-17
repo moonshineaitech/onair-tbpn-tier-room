@@ -1,73 +1,29 @@
 'use client';
+import {useEffect,useRef,useState} from 'react';
+import {ChevronDown,ChevronUp,ExternalLink,Maximize2,Minimize2,Play,Radio,X} from 'lucide-react';
+import {streamSource,streamEmbedUrl,streamWatchUrl,followsTbpn} from '@/lib/stream-source';
+import type {Room} from '@/lib/room-data';
 import type {PlaybackClock} from '@/lib/playback-clock';
-import {useCallback,useEffect,useRef,useState} from 'react';
-import {ChevronDown,ChevronUp,ExternalLink,Maximize2,Minimize2,Pause,Play,Radio,Volume2,VolumeX,X,RotateCcw} from 'lucide-react';
-import {inShowWindow,SHOW_SCHEDULE} from '@/lib/show-schedule';
-import {FALLBACK_REPLAY,type Broadcast,type BroadcastVideo} from '@/lib/tbpn-stream';
-
-export type PlaybackRequest={followLive?:boolean;id:number;videoId:string|null;start:number;title:string};
-type Player={playVideo:()=>void;pauseVideo:()=>void;mute:()=>void;unMute:()=>void;setVolume:(n:number)=>void;loadVideoById:(v:{videoId:string;startSeconds?:number})=>void;getDuration:()=>number;getCurrentTime:()=>number;getVideoData:()=>{video_id?:string};seekTo:(seconds:number,allowSeekAhead:boolean)=>void;destroy:()=>void};
-type Youtube={Player:new(element:HTMLElement,options:unknown)=>Player};
-type YoutubeWindow=Window&{YT?:Youtube;onYouTubeIframeAPIReady?:()=>void};
-let youtubeReady:Promise<Youtube>|null=null;
-function youtube(){
- const w=window as YoutubeWindow;if(w.YT?.Player)return Promise.resolve(w.YT);
- if(!youtubeReady)youtubeReady=new Promise<Youtube>((resolve,reject)=>{
-   const previous=w.onYouTubeIframeAPIReady;
-   const timer=setTimeout(()=>{youtubeReady=null;reject(new Error('The YouTube player is taking longer than expected.'));},12000);
-   w.onYouTubeIframeAPIReady=()=>{previous?.();clearTimeout(timer);if(w.YT)resolve(w.YT);};
-   let script=document.querySelector<HTMLScriptElement>('#youtube-iframe-api');
-   if(!script){script=document.createElement('script');script.id='youtube-iframe-api';script.src='https://www.youtube.com/iframe_api';script.async=true;script.onerror=()=>{clearTimeout(timer);youtubeReady=null;script?.remove();reject(new Error('YouTube could not be loaded.'));};document.head.appendChild(script);}
- });return youtubeReady;
+import YoutubePlayer,{type PlaybackRequest} from './floating-youtube';
+export type {PlaybackRequest} from './floating-youtube';
+type Props={room:Room;open:boolean;reveal:number;onOpen:()=>void;onClose:()=>void;request:PlaybackRequest|null;onClock?:(clock:PlaybackClock|null)=>void};
+export default function FloatingPlayer(props:Props){
+ const source=streamSource(props.room.videoId);if(source.provider==='none')return null;
+ return source.provider==='youtube'&&(!source.channel||followsTbpn(props.room))?<YoutubePlayer key={props.room.id+props.room.videoId} {...props}/>:<LinkedPlayer key={props.room.id+props.room.videoId} {...props}/>;
 }
-type Mode='mini'|'expanded'|'collapsed';
-type Props={open:boolean;reveal:number;onOpen:()=>void;onClose:()=>void;request:PlaybackRequest|null;onClock?:(clock:PlaybackClock|null)=>void};
-export default function FloatingPlayer({open,reveal,onOpen,onClose,request,onClock}:Props){
- const [broadcast,setBroadcast]=useState<Broadcast|null>(null),[mode,setMode]=useState<Mode>('mini'),[manual,setManual]=useState<(BroadcastVideo&{start:number;requestId:number})|null>(null),[volume,setVolume]=useState(70),[volumeOpen,setVolumeOpen]=useState(false),[muted,setMuted]=useState(true),[playing,setPlaying]=useState(false),[ready,setReady]=useState(false),[blocked,setBlocked]=useState(false),[error,setError]=useState(''),[retry,setRetry]=useState(0);
- const clockCallback=useRef(onClock);clockCallback.current=onClock;
- const lastCheck=useRef(0),volumeRoot=useRef<HTMLDivElement>(null),volumeRef=useRef(70),host=useRef<HTMLDivElement>(null),player=useRef<Player|null>(null),playerReady=useRef(false),mutedRef=useRef(true),modeBeforeCollapse=useRef<Mode>('mini'),livePositioned=useRef<string|null>(null);
- const broadcastRef=useRef(broadcast);broadcastRef.current=broadcast;
- const active=manual||broadcast?.selected,activeRef=useRef(active);activeRef.current=active;
- const start=manual?.start||0,startRef=useRef(start);startRef.current=start;
- const jumpToLive=useCallback((target:Player|null=player.current)=>{const current=activeRef.current;if(!target||!current?.isLive)return false;const edge=target.getDuration();if(!Number.isFinite(edge)||edge<=0)return false;livePositioned.current=current.videoId;target.seekTo(Math.max(0,edge-3),true);return true;},[]);
- const refresh=useCallback(async(signal?:AbortSignal)=>{lastCheck.current=Date.now();try{const r=await fetch('/api/stream',{cache:'no-store',signal});if(!r.ok)throw new Error();const result=await r.json() as Broadcast;if(!/^[-\w]{11}$/.test(result.selected?.videoId))throw new Error();setBroadcast(result);window.dispatchEvent(new CustomEvent('onair:broadcast',{detail:result}));}catch(e){if((e as Error).name==='AbortError')return;setBroadcast(previous=>previous?{...previous,stale:true}:{selected:FALLBACK_REPLAY,replay:FALLBACK_REPLAY,checkedAt:0,nextCheckAt:0,stale:true});}},[]);
- useEffect(()=>{const controller=new AbortController();void refresh(controller.signal);const tick=()=>{if(document.visibilityState==='visible'&&Date.now()-lastCheck.current>=(inShowWindow()?14000:59000))void refresh(controller.signal);};const interval=setInterval(tick,15000);document.addEventListener('visibilitychange',tick);return()=>{controller.abort();clearInterval(interval);document.removeEventListener('visibilitychange',tick);};},[refresh]);
- useEffect(()=>{if(!reveal)return;setMode('mini');},[reveal]);
- useEffect(()=>{if(!request){setManual(null);return;}if(request.followLive&&!broadcastRef.current)return;const explicit=request.videoId&&/^[-\w]{11}$/.test(request.videoId)?request.videoId:null;const current=activeRef.current;if(!explicit&&!current)return;setManual({videoId:explicit||current!.videoId,title:request.title,isLive:!!request.followLive&&!!broadcastRef.current?.selected.isLive&&!broadcastRef.current?.stale&&broadcastRef.current.selected.videoId===explicit,durationSeconds:0,start:request.start,requestId:request.id});setMode('mini');},[request,!!broadcast]);
- useEffect(()=>{if(manual?.isLive&&broadcast&&!broadcast.stale&&(!broadcast.selected.isLive||broadcast.selected.videoId!==manual.videoId))setManual(previous=>previous?{...previous,isLive:false}:null);},[manual?.isLive,manual?.videoId,broadcast?.selected.isLive,broadcast?.selected.videoId,broadcast?.stale]);
- useEffect(()=>{
-   if(!open||!host.current||!activeRef.current)return;
-   let cancelled=false;setError('');setReady(false);playerReady.current=false;livePositioned.current=null;
-   youtube().then(api=>{if(cancelled||!host.current)return;const element=document.createElement('div');host.current.appendChild(element);
-     player.current=new api.Player(element,{width:'100%',height:'100%',videoId:activeRef.current!.videoId,playerVars:{autoplay:1,mute:1,playsinline:1,rel:0,origin:location.origin,...(!activeRef.current!.isLive?{start:startRef.current}:{})},events:{
-       onReady:(event:{target:Player})=>{if(cancelled)return;playerReady.current=true;setReady(true);if(mutedRef.current)event.target.mute();else{event.target.unMute();event.target.setVolume(volumeRef.current);}const current=activeRef.current!;event.target.loadVideoById(current.isLive?{videoId:current.videoId}:{videoId:current.videoId,startSeconds:startRef.current});},
-       onStateChange:(event:{data:number;target:Player})=>{if(cancelled)return;setPlaying(event.data===1);if(event.data===1){setBlocked(false);if(activeRef.current?.isLive&&livePositioned.current!==activeRef.current.videoId)jumpToLive(event.target);}},
-       onAutoplayBlocked:()=>{if(!cancelled)setBlocked(true);},
-       onError:()=>{if(!cancelled)setError('This video cannot play here. Open it on YouTube or retry.');}
-     }});
-   }).catch(e=>{if(!cancelled)setError((e as Error).message);});
-   return()=>{cancelled=true;playerReady.current=false;player.current?.destroy();player.current=null;};
- },[open,!!active,retry,jumpToLive]);
- useEffect(()=>{if(playerReady.current&&active){setError('');setBlocked(false);livePositioned.current=null;player.current?.loadVideoById(active.isLive?{videoId:active.videoId}:{videoId:active.videoId,startSeconds:start});}},[active?.videoId,manual?.requestId,start]);
- useEffect(()=>{const tick=()=>{const target=player.current,current=activeRef.current;if(!open||!target||!playerReady.current||!current){clockCallback.current?.(null);return;}try{const seconds=target.getCurrentTime(),data=target.getVideoData();if(data.video_id!==current.videoId||!Number.isFinite(seconds)||seconds<0){clockCallback.current?.(null);return;}clockCallback.current?.({videoId:current.videoId,seconds,duration:target.getDuration(),live:current.isLive,playing,sampledAt:Date.now()});}catch{clockCallback.current?.(null);}};tick();const timer=setInterval(tick,1000);return()=>{clearInterval(timer);clockCallback.current?.(null);};},[open,playing,active?.videoId]);
- useEffect(()=>{if(!volumeOpen)return;const outside=(e:PointerEvent)=>{if(!volumeRoot.current?.contains(e.target as Node))setVolumeOpen(false);};const key=(e:KeyboardEvent)=>{if(e.key==='Escape')setVolumeOpen(false);};document.addEventListener('pointerdown',outside);document.addEventListener('keydown',key);return()=>{document.removeEventListener('pointerdown',outside);document.removeEventListener('keydown',key);};},[volumeOpen]);
- function sound(){if(!player.current||!ready)return;const next=!muted;mutedRef.current=next;setMuted(next);if(next)player.current.mute();else{if(!volumeRef.current){volumeRef.current=70;setVolume(70);}player.current.unMute();player.current.setVolume(volumeRef.current);player.current.playVideo();}}
- function adjustVolume(value:number){volumeRef.current=value;setVolume(value);mutedRef.current=value===0;setMuted(value===0);player.current?.setVolume(value);if(value)player.current?.unMute();else player.current?.mute();}
- function playback(){if(!player.current||!ready)return;if(playing)player.current.pauseVideo();else player.current.playVideo();}
- function collapse(){setVolumeOpen(false);if(mode==='collapsed')setMode(modeBeforeCollapse.current);else{modeBeforeCollapse.current=mode;setMode('collapsed');}}
- const live=!!active?.isLive&&!!broadcast?.selected.isLive&&broadcast.selected.videoId===active.videoId&&!broadcast.stale,label=!active?'CONNECTING':live?'LIVE NOW':manual?'EPISODE':broadcast?.stale?'TBPN REPLAY':'LATEST FULL SHOW';
- const url='https://www.youtube.com/watch?v='+(active?.videoId||FALLBACK_REPLAY.videoId)+(manual?'&t='+Math.floor(start)+'s':'');
- if(!open)return <button className="floating-reopen" onClick={onOpen}><Radio size={14}/><span>Watch TBPN</span><ChevronUp size={14}/></button>;
- return <aside id="stream-panel" className={`floating-player player-${mode}`} aria-label="TBPN floating video player">
-   <header className="floating-player-header"><button className="floating-player-brand" onClick={()=>{if(mode==='collapsed')collapse();}} aria-label={mode==='collapsed'?'Restore TBPN player':'TBPN player'}><span className="floating-tbpn" title={SHOW_SCHEDULE}>TBPN</span><span className={'floating-badge '+(live?'is-live':'')}>{live?<i/>:null}{label}</span></button><div className="floating-window-controls">
-     <button onClick={collapse} aria-label={mode==='collapsed'?'Restore video player':'Minimize video player'} title={mode==='collapsed'?'Restore':'Minimize'}>{mode==='collapsed'?<ChevronUp size={15}/>:<ChevronDown size={15}/>}</button>
-     {mode!=='collapsed'?<button onClick={()=>setMode(mode==='expanded'?'mini':'expanded')} aria-label={mode==='expanded'?'Shrink video player':'Expand video player'} title={mode==='expanded'?'Shrink':'Expand'}>{mode==='expanded'?<Minimize2 size={14}/>:<Maximize2 size={14}/>}</button>:null}
-     <button onClick={()=>{setVolumeOpen(false);onClose();}} aria-label="Close video player" title="Close"><X size={15}/></button>
-   </div></header>
-   <div className="floating-player-content" aria-hidden={mode==='collapsed'} inert={mode==='collapsed'}>
-     <div className="floating-video-stage"><div ref={host} className="floating-video-host"/>{!active?<div className="floating-loading"><Radio size={20}/><span>Finding the current TBPN show…</span></div>:null}{error?<div className="floating-error" role="status"><p>{error}</p><a href={url} target="_blank" rel="noreferrer">Watch on YouTube<ExternalLink size={12}/></a><button onClick={()=>{setError('');if(playerReady.current){livePositioned.current=null;player.current?.loadVideoById(active!.isLive?{videoId:active!.videoId}:{videoId:active!.videoId,startSeconds:start});}else setRetry(n=>n+1);}}>Retry<RotateCcw size={12}/></button></div>:null}</div>
-     <div className="floating-video-caption"><p title={active?.title}>{active?.title||'Technology’s daily show.'}</p><div className="floating-playback-controls"><button onClick={playback} disabled={!ready} aria-label={playing?'Pause TBPN video':'Play TBPN video'}>{playing?<Pause size={13}/>:<Play size={13}/>}</button><div className="floating-volume-control" ref={volumeRoot}><button className="floating-sound" onClick={sound} disabled={!ready} aria-label={muted?'Unmute TBPN video':'Mute TBPN video'}>{muted?<VolumeX size={14}/>:<Volume2 size={14}/>}<span>{blocked?'Tap to play':muted?'Sound off':'Sound on'}</span></button><button className="volume-dropdown-toggle" aria-label="Adjust volume" aria-expanded={volumeOpen} disabled={!ready} onClick={()=>setVolumeOpen(v=>!v)}><ChevronDown size={11}/></button>{volumeOpen?<div className="floating-volume-popover"><label htmlFor="tbpn-volume">Volume <b>{muted?0:volume}%</b></label><input id="tbpn-volume" aria-label="TBPN volume" type="range" min={0} max={100} step={1} value={muted?0:volume} onChange={e=>adjustVolume(Number(e.target.value))}/></div>:null}</div>{live?<button className="floating-follow-live" aria-label="Jump to live broadcast" disabled={!ready} onClick={()=>{livePositioned.current=null;jumpToLive();player.current?.playVideo();}}><Radio size={11}/>Go live</button>:null}{manual?<button className="floating-follow-live" onClick={()=>{setManual(null);void refresh();}}>Back to {broadcast?.selected.isLive?'live':'latest'}</button>:null}<a href={url} target="_blank" rel="noreferrer" aria-label="Open current TBPN video on YouTube"><ExternalLink size={13}/></a></div></div>
-   </div>
-   {mode==='collapsed'?<div className="floating-collapsed-controls"><button onClick={playback} disabled={!ready} aria-label={playing?'Pause TBPN video':'Play TBPN video'}>{playing?<Pause size={13}/>:<Play size={13}/>}</button><button onClick={sound} disabled={!ready} aria-label={muted?'Unmute TBPN video':'Mute TBPN video'}>{muted?<VolumeX size={14}/>:<Volume2 size={14}/>}</button></div>:null}
- </aside>;
+function LinkedPlayer({room,open,reveal,onOpen,onClose,request,onClock}:Props){
+ const source=streamSource(room.videoId),[mode,setMode]=useState('mini'),[small,setSmall]=useState(false),[failed,setFailed]=useState(false),[retry,setRetry]=useState(0),media=useRef<HTMLVideoElement>(null),callback=useRef(onClock);callback.current=onClock;
+ const start=request?.videoId===room.videoId?request.start:0,url=streamWatchUrl(room.videoId,start),embed=streamEmbedUrl(room.videoId,typeof location==='undefined'?'':location.hostname,start);
+ useEffect(()=>{const q=matchMedia('(max-width:440px)'),change=()=>setSmall(q.matches);change();q.addEventListener('change',change);return()=>q.removeEventListener('change',change);},[]);
+ useEffect(()=>{if(reveal||request)setMode('mini');},[reveal,request]);
+ useEffect(()=>{setFailed(false);if(media.current&&Number.isFinite(start))media.current.currentTime=start;},[request?.id,start]);
+ useEffect(()=>{return()=>callback.current?.(null);},[]);
+ useEffect(()=>{if(!open)callback.current?.(null);},[open]);
+ useEffect(()=>{if(!open||source.provider!=='file')return;const timer=setInterval(()=>{const v=media.current;if(v&&room.videoId)callback.current?.({videoId:room.videoId,seconds:v.currentTime,duration:Number.isFinite(v.duration)?v.duration:0,playing:!v.paused,live:!Number.isFinite(v.duration),sampledAt:Date.now()});},1000);return()=>clearInterval(timer);},[open,room.videoId,source.provider]);
+ function clock(){const v=media.current;if(v&&room.videoId)callback.current?.({videoId:room.videoId,seconds:v.currentTime,duration:Number.isFinite(v.duration)?v.duration:0,playing:!v.paused,live:!Number.isFinite(v.duration),sampledAt:Date.now()});}
+ if(!open)return <button className="floating-reopen" onClick={onOpen}><Play size={14}/><span>Watch stream</span><ChevronUp size={14}/></button>;
+ const linked=source.provider==='link'||source.provider==='twitch'&&small;
+ return <aside id="stream-panel" className={`floating-player player-${mode} player-${source.provider}`} aria-label="Floating video player"><header className="floating-player-header"><button className="floating-player-brand" onClick={()=>setMode(mode==='collapsed'?'mini':'collapsed')}><span className="floating-tbpn" title={room.title}>{room.title}</span><span className="floating-badge">{source.label}</span></button><div className="floating-window-controls"><button aria-label={mode==='collapsed'?'Restore video player':'Minimize video player'} onClick={()=>setMode(mode==='collapsed'?'mini':'collapsed')}>{mode==='collapsed'?<ChevronUp size={15}/>:<ChevronDown size={15}/>}</button><button aria-label={mode==='expanded'?'Shrink video player':'Expand video player'} onClick={()=>setMode(mode==='expanded'?'mini':'expanded')}>{mode==='expanded'?<Minimize2 size={14}/>:<Maximize2 size={14}/>}</button><button aria-label="Close video player" onClick={onClose}><X size={15}/></button></div></header><div className="floating-player-content" aria-hidden={mode==='collapsed'} inert={mode==='collapsed'}><div className="floating-video-stage">
+ {linked||failed?<div className="linked-stream-fallback"><Radio size={24}/><b>{failed?'This player could not load.':source.provider==='twitch'?'Watch Twitch alongside the room.':'Your stream. Your room.'}</b><p>{linked?'Open the stream in another tab and keep ranking and chatting here.':'The broadcaster may limit embedded playback. Open the source to keep watching.'}</p><a href={url} target="_blank" rel="noopener noreferrer">Open {source.label}<ExternalLink size={13}/></a>{failed?<button onClick={()=>{setFailed(false);setRetry(n=>n+1);}}>Retry player</button>:null}</div>:source.provider==='file'?<video key={retry} ref={media} src={source.url} autoPlay muted playsInline controls onTimeUpdate={clock} onPlay={clock} onPause={clock} onLoadedMetadata={()=>{if(media.current)media.current.currentTime=start;clock();}} onError={()=>setFailed(true)}/>:embed?<iframe key={retry+':'+request?.id} src={embed} title={room.title+' · '+source.label} allow="autoplay; fullscreen; picture-in-picture; encrypted-media" allowFullScreen onError={()=>setFailed(true)}/>:null}
+ </div><div className="floating-video-caption"><p>{request?.videoId===room.videoId?request.title:room.title}</p><div className="floating-playback-controls"><span className="linked-player-note">{source.provider==='file'?'Use the video controls':linked?'Room chat stays here':'Playback controls are inside the player'}</span><a href={url} target="_blank" rel="noopener noreferrer" aria-label="Open stream source"><ExternalLink size={13}/></a></div></div></div></aside>;
 }

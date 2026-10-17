@@ -11,7 +11,7 @@ check((await a('newsletter/import',importBody)).status===403,'visitors cannot pu
 let result=await admin('newsletter/import',importBody);check(result.status===201&&result.data.added===2,'selected newsletter topics publish immediately');
 result=await admin('newsletter/import',importBody);check(result.data.added===0&&result.data.skipped===2,'reimporting the same newsletter does not duplicate topics');
 let state=(await b('state?room='+roomId)).data;check(state.moments.length===2&&state.shared.every(p=>p.tier==='U'),'newsletter topics persist in Unranked for other viewers');
-check((await admin('newsletter/import',{...importBody,url:'https://evil.example/news'})).status===400,'untrusted source URLs are rejected');
+check((await admin('newsletter/import',{...importBody,url:'javascript:alert(1)'})).status===400,'non-HTTPS source URLs are rejected');
 const abort=new AbortController(),stream=await fetch(base+'/api/events?room='+roomId,{signal:abort.signal}),reader=stream.body.getReader(),decoder=new TextDecoder();let pending='';
 async function event(after=-1){const end=Date.now()+6000;while(Date.now()<end){let at;while((at=pending.indexOf('\n\n'))>=0){const block=pending.slice(0,at);pending=pending.slice(at+2);const match=block.match(/data: (.+)/);if(match){const d=JSON.parse(match[1]);if(d.chatRevision>after)return d;}}const chunk=await reader.read();if(chunk.done)throw new Error('Stream ended');pending+=decoder.decode(chunk.value);}throw new Error('No chat event');}
 let rev=(await event()).chatRevision;const payload={roomId,author:'Alex',body:'A thoughtful chat comment',clientId:randomUUID()};

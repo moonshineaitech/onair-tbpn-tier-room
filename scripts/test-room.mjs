@@ -35,7 +35,7 @@ const attempts=await Promise.all([call('moments',{...body,title:'Third test'}),c
 check((await call('report',{itemId,reason:'Please review this example.'})).status===200,'viewer reports reach moderation');
 check((await call('admin',{action:'moderate',id:itemId,status:'hidden'},admin)).status===200,'admin can hide published content');
 check((await call('state?room='+roomId)).data.moments.length===0,'hidden content disappears from public board');
-await call('admin',{action:'roomStatus',id:roomId,status:'closed'},admin);check((await call('vote',{roomId,votes:[]})).status===403,'closed rooms reject votes');
+await call('admin',{action:'roomStatus',id:roomId,status:'closed'},admin);check((await call('vote',{roomId,votes:[]})).status===200,'closed shared rooms still allow post-show personal ranking');
 check((await call('admin',{action:'room',title:'Unauthorized room',description:'',video:''})).status===403,'visitors cannot invoke admin mutations');
 console.log(`${passed} checks passed. Local QA room: ${roomId}`);
 

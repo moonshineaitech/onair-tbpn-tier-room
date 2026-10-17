@@ -1,9 +1,10 @@
+import {managesRoom} from './room-permissions';
 import {ServiceError,type Visitor} from './room-services';
 import {REACTION_VALUES,emptyReaction,summarizeDistribution,type ReactionTarget,type ReactionSummary,type BoardPost,type PersonalBoard} from './community-data';
 import {TIERS,initialPlacement,type Moment} from './room-data';
 import {finishEpisode} from './episode-lifecycle';
 
-type Deps={checkText:(text:string)=>Promise<void>;rate:(key:string,limit:number,windowMs?:number)=>Promise<void>;log:(actor:string,action:string,detail:string)=>Promise<void>};
+type Deps={checkText:(text:string,roomId?:string)=>Promise<void>;rate:(key:string,limit:number,windowMs?:number)=>Promise<void>;log:(actor:string,action:string,detail:string)=>Promise<void>};
 const reply=(data:unknown,status=200)=>Response.json(data,{status,headers:{'Cache-Control':'no-store'}});
 const text=(v:unknown,max:number,required=true)=>{if(typeof v!=='string'||v.length>max||(required&&!v.trim()))throw new ServiceError('Check the text and character limits.');return v.trim();};
 const touch=(database:D1Database,roomId:string)=>database.prepare('UPDATE rooms SET revision=revision+1 WHERE id=?').bind(roomId);
@@ -52,7 +53,7 @@ export async function communityServices(req:Request,url:URL,path:string,b:any,wh
   if(path==='reactions'){const type=text(url.searchParams.get('type'),20) as ReactionTarget,id=text(url.searchParams.get('id'),220);if(!['moment','live-rank','board','ranking'].includes(type))throw new ServiceError('Invalid reaction target.');await validTarget(database,roomId,type,id);return reply(await reactionSummary(database,roomId,type,id,who.userId));}
   if(path==='posts')return reply({posts:await posts(database,roomId,who.userId,url.searchParams.get('id'),url.searchParams.get('sort')||'newest',Math.min(1000000,Math.max(0,Math.floor(Number(url.searchParams.get('offset'))||0))),(url.searchParams.get('q')||'').slice(0,80))});
   if(path==='insights'||path==='insights/export'){
-   if(!who.admin)throw new ServiceError('Admin access required.',403);
+   if(!await managesRoom(who,database,roomId))throw new ServiceError('Host access required.',403);
    const data=await communityState(database,roomId,who.userId),moments=(await database.prepare("SELECT m.id,m.title,m.category,CASE WHEN t.itemId IS NOT NULL THEN t.seconds WHEN m.timestamp>0 THEN m.timestamp END timestamp,COALESCE(t.source,CASE WHEN m.timestamp>0 THEN 'author' ELSE 'none' END) timingSource,(SELECT COUNT(*) FROM chat_messages c WHERE c.roomId=m.roomId AND c.momentId=m.id AND c.status='visible') comments,(SELECT COUNT(DISTINCT userId) FROM chat_messages c WHERE c.roomId=m.roomId AND c.momentId=m.id AND c.status='visible') commenters FROM moments m LEFT JOIN moment_timings t ON t.itemId=m.id WHERE m.roomId=? AND m.status='approved'").bind(roomId).all<{id:string;title:string;category:string;timestamp:number|null;timingSource:string;comments:number;commenters:number}>()).results;
    const participants=(await database.prepare("SELECT COUNT(DISTINCT v.userId) n FROM votes v JOIN moments m ON m.id=v.itemId WHERE m.roomId=? AND m.status='approved'").bind(roomId).first<{n:number}>())?.n||0;
    const episodeVideo=(await database.prepare('SELECT videoId FROM rooms WHERE id=?').bind(roomId).first<{videoId:string|null}>())?.videoId;
@@ -72,13 +73,13 @@ export async function communityServices(req:Request,url:URL,path:string,b:any,wh
   statements.push(b.active?database.prepare('INSERT OR IGNORE INTO reactions (roomId,targetType,targetId,userId,value,createdAt) VALUES (?,?,?,?,?,?)').bind(roomId,type,id,who.userId,value,Date.now()):database.prepare('DELETE FROM reactions WHERE roomId=? AND targetType=? AND targetId=? AND userId=? AND value=?').bind(roomId,type,id,who.userId,value));statements.push(touch(database,roomId));await database.batch(statements);return reply(await reactionSummary(database,roomId,type,id,who.userId));
  }
  if(path==='boards/settings'){
-  const title=text(b.title,70),byline=text(b.byline,30);if(typeof b.autoPublish!=='boolean')throw new ServiceError('Choose an auto-post setting.');await deps.checkText(title+' '+byline);
+  const title=text(b.title,70),byline=text(b.byline,30);if(typeof b.autoPublish!=='boolean')throw new ServiceError('Choose an auto-post setting.');await deps.checkText(title+' '+byline,roomId);
   await database.prepare('INSERT INTO boards (userId,roomId,updatedAt,title,byline,autoPublish,version) VALUES (?,?,?,?,?,?,1) ON CONFLICT(userId,roomId) DO UPDATE SET title=excluded.title,byline=excluded.byline,autoPublish=excluded.autoPublish,version=boards.version+1').bind(who.userId,roomId,Date.now(),title,byline,b.autoPublish?1:0).run();await touch(database,roomId).run();return reply({ok:true});
  }
  if(path==='boards/publish'){
   await deps.rate('publish:'+who.userId,15);
   const board=await database.prepare('SELECT title,byline FROM boards WHERE roomId=? AND userId=?').bind(roomId,who.userId).first<{title:string;byline:string}>();if(!board)throw new ServiceError('Rank a moment on My board first.');
-  await deps.checkText(board.title+' '+board.byline);
+  await deps.checkText(board.title+' '+board.byline,roomId);
   const entries=(await database.prepare("SELECT v.itemId,v.tier,v.score FROM votes v JOIN moments m ON m.id=v.itemId WHERE v.userId=? AND m.roomId=? AND m.status='approved'").bind(who.userId,roomId).all()).results;if(!entries.length)throw new ServiceError('Rank at least one moment before posting.');
   const previous=await database.prepare('SELECT id,status FROM board_posts WHERE roomId=? AND userId=?').bind(roomId,who.userId).first<{id:string;status:string}>();if(previous?.status==='hidden')throw new ServiceError('This board is hidden by a moderator.',403);
   const id=previous?.id||crypto.randomUUID(),time=Date.now();await database.batch([database.prepare("INSERT INTO board_posts (id,roomId,userId,title,byline,entries,createdAt,updatedAt,automatic,status) VALUES (?,?,?,?,?,?,?,?,0,'visible') ON CONFLICT(roomId,userId) DO UPDATE SET title=excluded.title,byline=excluded.byline,entries=excluded.entries,updatedAt=excluded.updatedAt,automatic=0,status='visible'").bind(id,roomId,who.userId,board.title,board.byline,JSON.stringify(entries),time,time),database.prepare('UPDATE boards SET publishedId=? WHERE roomId=? AND userId=?').bind(id,roomId,who.userId),touch(database,roomId)]);return reply({ok:true,id});
@@ -87,10 +88,10 @@ export async function communityServices(req:Request,url:URL,path:string,b:any,wh
   await database.batch([database.prepare("UPDATE board_posts SET status='withdrawn' WHERE roomId=? AND userId=? AND status!='hidden'").bind(roomId,who.userId),database.prepare('UPDATE boards SET publishedId=NULL,autoPublish=0 WHERE roomId=? AND userId=?').bind(roomId,who.userId),touch(database,roomId)]);return reply({ok:true});
  }
  if(path==='boards/moderate'){
-  if(!who.admin)throw new ServiceError('Admin access required.',403);const id=text(b.id,100);await database.batch([database.prepare("UPDATE board_posts SET status=? WHERE id=? AND roomId=?").bind(b.hidden===false?'visible':'hidden',id,roomId),touch(database,roomId)]);await deps.log(who.account!.email,'board:moderate',id);return reply({ok:true});
+  if(!await managesRoom(who,database,roomId))throw new ServiceError('Host access required.',403);const id=text(b.id,100);await database.batch([database.prepare("UPDATE board_posts SET status=? WHERE id=? AND roomId=?").bind(b.hidden===false?'visible':'hidden',id,roomId),touch(database,roomId)]);await deps.log(who.account?.email||who.userId!,'board:moderate',id);return reply({ok:true});
  }
  if(path==='episode/finish'){
-  if(!who.admin)throw new ServiceError('Admin access required.',403);await finishEpisode(database,roomId);await deps.log(who.account!.email,'episode:finish',roomId);return reply({ok:true});
+  if(!await managesRoom(who,database,roomId))throw new ServiceError('Host access required.',403);await finishEpisode(database,roomId);await deps.log(who.account?.email||who.userId!,'episode:finish',roomId);return reply({ok:true});
  }
  return null;
 }

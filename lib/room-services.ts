@@ -1,14 +1,15 @@
+import {managesRoom} from './room-permissions';
 import {promoteChatTiming,invalidateCommunityTiming} from './moment-timing';
 import {showImportStatus,controlShowImport} from './show-import';
 import {CATEGORIES} from './room-data';
 import {parseNewsletterFeed} from './newsletter';
 export class ServiceError extends Error{constructor(message:string,public status=400){super(message);}}
 export type Visitor={admin:boolean;account:{email:string;userId:string;displayName:string}|null;userId:string|null;ipHash:string;verified:boolean};
-type Dependencies={checkText:(s:string)=>Promise<void>;rate:(key:string,limit:number,windowMs?:number)=>Promise<void>;log:(actor:string,action:string,detail:string)=>Promise<void>};
+type Dependencies={checkText:(s:string,roomId?:string)=>Promise<void>;rate:(key:string,limit:number,windowMs?:number)=>Promise<void>;log:(actor:string,action:string,detail:string)=>Promise<void>};
 const reply=(v:unknown,status=200)=>Response.json(v,{status,headers:{'Cache-Control':'no-store'}});
 const field=(v:unknown,max:number,required=false)=>{if(typeof v!=='string'||v.length>max||(required&&!v.trim()))throw new ServiceError('Check the text and character limits.');return v.trim();};
 async function config(database:D1Database,key:string,fallback='[]'){const row=await database.prepare('SELECT value FROM settings WHERE key=?').bind(key).first<{value:string}>();try{return JSON.parse(row?.value||fallback);}catch{return JSON.parse(fallback);}}
-export async function canModerate(who:Visitor,database:D1Database){return who.admin||!!who.account&&(await config(database,'chatModerators')).includes(who.account.email.toLowerCase());}
+export async function canModerate(who:Visitor,database:D1Database,roomId=''){return who.admin||!!roomId&&await managesRoom(who,database,roomId)||!!who.account&&(await config(database,'chatModerators')).includes(who.account.email.toLowerCase());}
 const chatTouch=(database:D1Database,roomId:string)=>database.prepare('UPDATE rooms SET chatRevision=chatRevision+1 WHERE id=?').bind(roomId);
 const digest=async(v:string)=>Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(v)))).map(v=>v.toString(16).padStart(2,'0')).join('');
 export async function roomServices(req:Request,url:URL,path:string,b:any,who:Visitor,database:D1Database,deps:Dependencies):Promise<Response|null>{
@@ -19,7 +20,7 @@ export async function roomServices(req:Request,url:URL,path:string,b:any,who:Vis
    const topic=url.searchParams.get('moment')||'';
    const rows=(await database.prepare("SELECT id,userId,author,role,body,createdAt,videoSeconds,videoId,momentId FROM chat_messages WHERE roomId=? AND status='visible' AND (?='' OR momentId=?) ORDER BY createdAt DESC,id DESC LIMIT 100").bind(roomId,topic,topic).all<{id:string;userId:string;author:string;role:string;body:string;createdAt:number}>()).results;
    const mute=who.userId?await database.prepare('SELECT MAX(until) until FROM chat_mutes WHERE roomId=? AND (userId=? OR ipHash=?) AND until>?').bind(roomId,who.userId,who.ipHash,time).first<{until:number}>():null;
-   return reply({messages:rows.reverse().map(({userId,...row})=>({...row,own:userId===who.userId})),revision:room.chatRevision,muteUntil:mute?.until||0,canModerate:await canModerate(who,database),suggestedName:who.admin?'Ryan':`Guest ${who.userId?.slice(-4)||''}`});
+   return reply({messages:rows.reverse().map(({userId,...row})=>({...row,own:userId===who.userId})),revision:room.chatRevision,muteUntil:mute?.until||0,canModerate:await canModerate(who,database,roomId),suggestedName:who.admin?'Ryan':`Guest ${who.userId?.slice(-4)||''}`});
  }
  if(req.method==='GET'&&path==='chat/admin'){
    if(!who.admin)throw new ServiceError('Admin access required.',403);
@@ -45,12 +46,12 @@ export async function roomServices(req:Request,url:URL,path:string,b:any,who:Vis
  if(path==='chat'){
    const roomId=field(b.roomId,100,true),body=field(b.body,500,true),author=field(b.author||'Guest',30,true),id=field(b.clientId,36,true);
    if(!/^[a-f0-9-]{36}$/.test(id))throw new ServiceError('Invalid message identifier.');
-   await deps.checkText(body+' '+author);
+   await deps.checkText(body+' '+author,roomId);
    if(!await database.prepare('SELECT id FROM rooms WHERE id=?').bind(roomId).first())throw new ServiceError('Room not found.',404);
    let videoSeconds:number|null=null,videoId:string|null=null,momentId:string|null=null;
    if(b.videoSeconds!==undefined&&b.videoSeconds!==null){
     const room=await database.prepare('SELECT videoId FROM rooms WHERE id=?').bind(roomId).first<{videoId:string|null}>();
-    if(!Number.isInteger(b.videoSeconds)||b.videoSeconds<0||b.videoSeconds>86400||!room?.videoId||b.videoId!==room.videoId||!/^[-\w]{11}$/.test(b.videoId))throw new ServiceError('The player timestamp must belong to this episode.');
+    if(!Number.isInteger(b.videoSeconds)||b.videoSeconds<0||b.videoSeconds>86400||!room?.videoId||b.videoId!==room.videoId||!/^[-\w]{11}$/.test(b.videoId)&&!b.videoId.startsWith('file:https://'))throw new ServiceError('The player timestamp must belong to this episode.');
     const timing=await config(database,'timingSync:'+b.videoId,'null');const bound=timing?.live&&timing.startedAt?Math.max(timing.duration||0,(time-timing.startedAt)/1000):timing?.duration;if(bound>0&&b.videoSeconds>bound+60)throw new ServiceError('This timestamp is beyond the episode.');
     videoSeconds=b.videoSeconds;videoId=b.videoId;
    }
@@ -58,7 +59,7 @@ export async function roomServices(req:Request,url:URL,path:string,b:any,who:Vis
    const existing=await database.prepare('SELECT userId,roomId,status,body,author,role,createdAt,videoSeconds,videoId,momentId FROM chat_messages WHERE id=?').bind(id).first<{userId:string;roomId:string;status:string;body:string;author:string;role:string;createdAt:number;videoSeconds:number|null;videoId:string|null;momentId:string|null}>();
    if(existing){if(existing.userId!==who.userId||existing.roomId!==roomId||existing.body!==body)throw new ServiceError('Please retry this message.',409);if(existing.status!=='visible')throw new ServiceError('This message has been removed.',409);const {userId:_owner,roomId:_room,status:_status,...message}=existing;return reply({ok:true,id,message:{...message,id,own:true}});}
    await deps.rate('chat:'+who.userId,15);await deps.rate('chat-network:'+who.ipHash,45);
-   const role=who.admin?'admin':await canModerate(who,database)?'moderator':'member';
+   const role=who.admin?'admin':await canModerate(who,database,roomId)?'moderator':'member';
    const results=await database.batch([
      database.prepare("INSERT INTO chat_messages (id,roomId,userId,ipHash,author,role,body,status,createdAt,videoSeconds,videoId,momentId) SELECT ?,?,?,?,?,?,?,'visible',?,?,?,? WHERE NOT EXISTS (SELECT 1 FROM chat_mutes WHERE roomId=? AND (userId=? OR ipHash=?) AND until>?) RETURNING id").bind(id,roomId,who.userId,who.ipHash,author,role,body,time,videoSeconds,videoId,momentId,roomId,who.userId,who.ipHash,time),
      database.prepare('UPDATE rooms SET chatRevision=chatRevision+1 WHERE id=? AND EXISTS (SELECT 1 FROM chat_messages WHERE id=?)').bind(roomId,id)
@@ -70,7 +71,7 @@ export async function roomServices(req:Request,url:URL,path:string,b:any,who:Vis
  if(path==='chat/moderate'){
    const message=await database.prepare('SELECT id,roomId,userId,ipHash,author,role FROM chat_messages WHERE id=?').bind(field(b.id,36,true)).first<{id:string;roomId:string;userId:string;ipHash:string;author:string;role:string}>();
    if(!message)throw new ServiceError('Message not found.',404);
-   const moderate=await canModerate(who,database);
+   const moderate=await canModerate(who,database,message.roomId);
    if(b.action==='hide'){
      if(!moderate&&message.userId!==who.userId)throw new ServiceError('Moderator access required.',403);
      await database.batch([database.prepare("UPDATE chat_messages SET status='hidden' WHERE id=?").bind(message.id),chatTouch(database,message.roomId)]);
@@ -107,16 +108,17 @@ export async function roomServices(req:Request,url:URL,path:string,b:any,who:Vis
    return reply(await showImportStatus(database,roomId));
  }
  if(path==='newsletter/import'){
-   if(!who.admin)throw new ServiceError('Admin access required.',403);
    const roomId=field(b.roomId,100,true),title=field(b.title||'Run of show',150,true),source=field(b.url||'',300);
-   if(source&&!/^https:\/\/(?:tbpn\.substack\.com|www\.tbpn\.com|tbpn\.com)\//.test(source))throw new ServiceError('Use an official TBPN newsletter URL, or leave it blank for pasted notes.');
+   if(!await managesRoom(who,database,roomId))throw new ServiceError('Host access required.',403);
+   await deps.checkText(title,roomId);
+   if(source){let valid=false;try{const u=new URL(source);valid=u.protocol==='https:'&&!u.username&&!u.password;}catch{}if(!valid)throw new ServiceError('Use an HTTPS source link, or leave it blank for pasted notes.');}
    if(!Array.isArray(b.topics)||!b.topics.length||b.topics.length>30)throw new ServiceError('Choose 1–30 topics.');
    const room=await database.prepare('SELECT status FROM rooms WHERE id=?').bind(roomId).first();if(!room||room.status!=='open')throw new ServiceError('Choose an open board.',403);
-   const rows=[];for(const topic of b.topics){const name=field(topic.title,70,true),category=field(topic.category||'Moment',20);if(!CATEGORIES.includes(category))throw new ServiceError('Invalid category.');await deps.checkText(name);const origin='newsletter:'+await digest((source||title)+'\n'+name.toLowerCase());rows.push({id:crypto.randomUUID(),name,category,origin});}
+   const rows=[];for(const topic of b.topics){const name=field(topic.title,70,true),category=field(topic.category||'Moment',20);if(!CATEGORIES.includes(category))throw new ServiceError('Invalid category.');await deps.checkText(name,roomId);const origin='newsletter:'+await digest((source||title)+'\n'+name.toLowerCase());rows.push({id:crypto.randomUUID(),name,category,origin});}
    const existing=(await database.prepare('SELECT title,origin,status FROM moments WHERE roomId=?').bind(roomId).all<{title:string;origin:string|null;status:string}>()).results;const names=new Set(existing.map(row=>row.title.toLowerCase())),origins=new Set(existing.map(row=>row.origin));const fresh=rows.filter(row=>{if(names.has(row.name.toLowerCase())||origins.has(row.origin))return false;names.add(row.name.toLowerCase());origins.add(row.origin);return true;});const count=existing.filter(row=>row.status==='approved').length;if(count+fresh.length>300)throw new ServiceError('This board can hold 300 approved moments. Import fewer topics.');
    const results=await database.batch([...fresh.map(row=>database.prepare("INSERT OR IGNORE INTO moments (id,roomId,title,description,category,timestamp,image,status,createdBy,ipHash,createdAt,origin) SELECT ?,?,?,?, ?,0,NULL,'approved',?,?,?,? WHERE NOT EXISTS (SELECT 1 FROM moments WHERE roomId=? AND lower(title)=lower(?)) AND (SELECT COUNT(*) FROM moments WHERE roomId=? AND status='approved')<300").bind(row.id,roomId,row.name,('Run of show: '+title+(source?' · '+source:'')).slice(0,400),row.category,who.userId,who.ipHash,time,row.origin,roomId,row.name,roomId)),database.prepare('UPDATE rooms SET revision=revision+1 WHERE id=?').bind(roomId)]);
    const added=results.slice(0,-1).reduce((sum,r)=>sum+Number(r.meta.changes||0),0);
-   await deps.log(who.account!.email,'newsletter',`${added} topics · ${title}`);return reply({ok:true,added,skipped:rows.length-added},201);
+   await deps.log(who.account?.email||who.userId!,'newsletter',`${added} topics · ${title}`);return reply({ok:true,added,skipped:rows.length-added},201);
  }
  return null;
 }
