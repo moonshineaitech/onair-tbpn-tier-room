@@ -1,0 +1,37 @@
+import assert from 'node:assert/strict';
+import {readFileSync} from 'node:fs';
+import {resolve,dirname} from 'node:path';
+import ts from 'typescript';
+const modules=new Map();
+function moduleUrl(file){file=resolve(file);if(modules.has(file))return modules.get(file);let js=ts.transpileModule(readFileSync(file,'utf8'),{compilerOptions:{module:ts.ModuleKind.ESNext,target:ts.ScriptTarget.ES2022}}).outputText;js=js.replace(/from\s+(['"])(\.[^'"]+)\1/g,(_,q,p)=>'from '+q+moduleUrl(resolve(dirname(file),p+'.ts'))+q);const url='data:text/javascript;base64,'+Buffer.from(js).toString('base64');modules.set(file,url);return url;}
+const {predictionVotes,nextPrediction,predictionRows,sortPredictions}=await import(moduleUrl('lib/prediction-ranking.ts'));
+const moments=['Alpha','Beta','Gamma','Delta'].map((title,i)=>({id:String(i),roomId:'thiel-nashville-2026',title}));
+const vote=(id,tier,score=50)=>({itemId:String(id),tier,score});
+const dist=(id,tiers,extra={})=>({itemId:String(id),tiers,...extra});
+let checks=0;function check(value,label){assert.ok(value,label);console.log('PASS '+label);checks++;}
+check(predictionVotes(moments,[vote(0,'F',0)]).get('0')==='F','F tier counts as ranked even with a zero score');
+check(predictionVotes(moments,[vote(0,'S',0)]).get('0')==='S','explicit tier stays independent from numeric score');
+check(predictionVotes(moments,[vote(88,'S'),vote(0,'fake')]).size===0,'hidden, unknown, and invalid tiers do not affect progress');
+check(predictionVotes(moments,[vote(0,'S'),vote(0,'U')]).size===0,'unranking removes a prior personal tier');
+check(predictionVotes(moments,[vote(0,'S'),vote(0,'F')]).get('0')==='F','the latest personal choice wins');
+check(nextPrediction([],[],null,new Set())===null,'an empty catalog has no next pick');
+check(nextPrediction(moments,[vote(0,'S')],null,new Set())==='1','a returning viewer resumes at the first unranked pick');
+check(nextPrediction(moments,[],'3',new Set(['3','0']))==='1','skip traverses the catalog cyclically without repeating visited picks');
+check(nextPrediction(moments,[],'3',new Set(['0','1','2','3']))===null,'a fully visited pass ends instead of looping');
+check(nextPrediction(moments,[vote(0,'F')],'3',new Set(),false)==='0','review mode includes already ranked picks');
+const empty=predictionRows(moments,[],[]);
+check(empty.every(r=>r.total===0&&!r.leaders.length&&r.gap===null&&r.support===0&&r.split===0),'no audience data produces no invented consensus or comparisons');
+const split=predictionRows(moments,[dist(0,{S:10,F:10},{total:999,average:50})],[vote(0,'B')])[0];
+check(split.total===20&&split.leaders.join('/')==='S/F'&&split.leaderPercent===50,'tier counts determine totals and retain tied leaders');
+check(split.split===100&&split.support===50&&split.gap===null,'an even S/F split is maximally disputed, with no invented middle leader');
+const unanimous=predictionRows(moments,[dist(1,{F:8},{average:100})],[vote(1,'S')])[1];
+check(unanimous.leaders[0]==='F'&&unanimous.split===0&&unanimous.gap===5,'unanimous F remains F regardless of independent numeric scores');
+const partial=predictionRows(moments,[dist(2,{S:3,A:2,B:1,C:-1,D:1.5,F:NaN,U:100})],[vote(2,'C')])[2];
+check(partial.total===6&&partial.support===83&&partial.gap===3,'support uses only valid S/A tier counts and gaps use ordered tiers');
+check(predictionRows(moments,[dist(88,{S:100})],[]).every(r=>r.total===0),'unknown catalog entries do not influence the community view');
+const rows=predictionRows(moments,[dist(0,{S:10,F:10}),dist(1,{F:8}),dist(2,{S:3,A:2,B:1})],[vote(1,'S'),vote(2,'C')]);
+check(sortPredictions(rows,'support').map(r=>r.moment.id).join() === '2,0,1,3','support sort prioritizes rated picks and real S/A support');
+check(sortPredictions(rows,'split')[0].moment.id==='0','most disputed sort surfaces divided audiences');
+check(sortPredictions(rows,'mine').map(r=>r.moment.id).slice(0,2).join()==='1,2','personal differences prioritize the largest ordinal tier gaps');
+check(rows.map(r=>r.moment.id).join()==='0,1,2,3','sorting does not mutate the source catalog');
+console.log(`${checks} prediction ranking checks passed.`);
