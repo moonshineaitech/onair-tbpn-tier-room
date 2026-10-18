@@ -2,7 +2,7 @@
 import {requestJSON} from '@/lib/client-request';
 import {useEffect,useMemo,useRef,useState} from 'react';
 import {ArrowLeftRight,ArrowRight,Check,Copy,Download,ExternalLink,LoaderCircle,Share2,X} from 'lucide-react';
-import {TIERS,type RoomState,type Vote} from '@/lib/room-data';
+import {TIERS,roomQuery,type RoomState,type Vote} from '@/lib/room-data';
 import type {BoardPost} from '@/lib/community-data';
 import type {PublicComparison} from '@/lib/public-comparison';
 import {comparisonApi,comparisonRows,comparisonSummary,comparisonUrl,type ComparisonRow} from '@/lib/board-comparison';
@@ -25,8 +25,8 @@ export default function BoardComparison({state,votes,initialRight='',initialLeft
  useEffect(()=>{if(!sharing)return;shareDialog.current?.showModal();return()=>{shareDialog.current?.close();shareButton.current?.focus();};},[sharing]);
  // A previous share must be reviewed again if either participant changes.
  useEffect(()=>{setShareData(null);setSharing(false);},[rightId,leftId,roomId]);
- function selectRight(id:string){setRightId(id);setRight(null);setError('');history.replaceState(null,'',leftId?comparisonUrl('',roomId,leftId,id):`/tier-list?room=${encodeURIComponent(roomId)}&view=compare${id?'&board='+encodeURIComponent(id):''}`);}
- function useMine(){setLeftId('');history.replaceState(null,'',`/tier-list?room=${encodeURIComponent(roomId)}&view=compare${rightId?'&board='+encodeURIComponent(rightId):''}`);}
+ function selectRight(id:string){setRightId(id);setRight(null);setError('');history.replaceState(null,'',leftId?comparisonUrl('',roomId,leftId,id):`${roomQuery(roomId)}view=compare${id?'&board='+encodeURIComponent(id):''}`);}
+ function useMine(){setLeftId('');history.replaceState(null,'',`${roomQuery(roomId)}view=compare${rightId?'&board='+encodeURIComponent(rightId):''}`);}
  const left=leftId?publicData?.left:null,rows=useMemo(()=>comparisonRows(state.moments,leftId?left?.entries||[]:votes,right?.entries||[],leftId?publicData?.distribution||[]:state.distribution),[state.moments,votes,right,left,leftId,publicData,state.distribution]),summary=useMemo(()=>comparisonSummary(rows),[rows]);
  const shown=useMemo(()=>rows.filter(r=>(!search||r.moment.title.toLowerCase().includes(search.toLowerCase()))&&(filter==='all'||filter==='different'&&(r.gap??0)>0||filter==='unranked'&&r.left===null)).sort((a,b)=>sort==='gap'?(b.gap??-1)-(a.gap??-1)||a.moment.title.localeCompare(b.moment.title):a.moment.createdAt-b.moment.createdAt),[rows,search,filter,sort]);
  const options=right&&!posts.some(p=>p.id===right.id)?[right,...posts]:posts,leftLabel=leftId?left?.byline||'Published board':'My board',rightLabel=right?.byline||'Shared board';

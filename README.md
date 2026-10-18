@@ -151,3 +151,14 @@ The homepage serves saved rooms immediately, then checks up to six due sources i
 All picks start Unranked. S through F labels describe likelihood for this room while ordinary stream-room labels remain unchanged. Shared rankings, independent personal boards, consensus, chat, moderation, snapshot sharing, and comparisons use the existing persistent backend. Dedicated links preserve the selected room without needing a query parameter; published-board metadata and preview images identify predictions.
 
 `ensureThielPredictions` initializes this explicitly requested catalog in an atomic, idempotent D1 batch outside schema migrations. Repeated reads preserve admin edits and hidden picks and never create votes, placements, reactions, or audience posts. Site admins can edit the catalog through the normal board controls. `scripts/test-thiel-predictions.mjs` verifies initialization, moderation preservation, zero fabricated audience data, scoped tier labels, and canonical share URLs.
+
+
+## Platform release: guided boards and reliable chat
+
+Every room now offers Quick rank on My board and in the community view. It resumes unranked moments, supports S/A/B/C/D/F or 1–6 plus arrow keys, and uses the existing scoped autosave/recovery path. Completion can publish a snapshot through the normal image-sharing flow. Nashville keeps its dedicated prediction language and likelihood labels.
+
+Community pulse now shows explicit tier counts, leading tiers (including ties), S/A support, a division index, and differences from the viewer's personal tiers. Independent numeric mean scores never determine a consensus tier. Small samples and unranked moments remain explicit. Comparison controls preserve the canonical URL for each room.
+
+Room chat preserves up to ten unconfirmed sends for seven days in local browser storage, scoped to the opaque identity and room. Reload does not resend automatically. A saved own-message echo removes the entry, and Retry retains the original message ID to avoid duplicates after a lost acknowledgement. Changing identities or rooms clears the visible outbox without merging private drafts. Clearing storage or losing the original anonymous session limits recovery; no unique-human guarantee is implied.
+
+With local preview running and the ignored local test identity configured, `node scripts/test-release.mjs` runs the local acceptance suites sequentially and writes per-suite logs and a summary under ignored `.sites-runtime/release-qa/`. The release audit in `docs/platform-release-audit-2026-10-18.md` records browser fault injection, API/database checks, operational limits, and publication evidence. Test fixtures do not enter production or the source archive.

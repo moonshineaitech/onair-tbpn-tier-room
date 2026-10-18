@@ -29,3 +29,6 @@
 
 .prediction-progress small button{color:#f5d2a4;text-decoration:underline;text-underline-offset:3px;padding:4px;font-size:10px}.prediction-pulse-list{max-height:clamp(220px,calc(100dvh - 590px),560px)}
 @media(max-width:700px){.prediction-pulse-list{max-height:55dvh;min-height:240px}}
+
+.prediction-focus-art{position:absolute;left:16px;top:18px;width:96px;height:96px;overflow:hidden;border-radius:4px}.tier-app .prediction-focus-art .moment-art{width:100%;height:100%;border-radius:4px}.tier-app .prediction-focus-art .moment-art img{height:100%;width:100%;object-fit:cover}.tier-app :is(.prediction-pulse,.prediction-start-strip) button:focus-visible{outline:2px solid #f2cea1;outline-offset:3px}.personal-quick-rank{white-space:nowrap;font-weight:600}.chat-composer .chat-verify{display:flex;align-items:center;gap:6px;min-height:34px;color:#c4dca8;font-size:11px;padding:5px 0}
+@media(max-width:700px){.prediction-focus-art{left:12px;top:14px;width:68px;height:68px}}
